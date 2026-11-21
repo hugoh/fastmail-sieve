@@ -220,8 +220,3 @@ def write_steps(session=None):
         Step("Push the managed blocks", session.push, slow=True),
         Step("Verify with a fresh pull", session.verify, slow=True),
     ]
-
-
-def build_steps():
-    session = Session()
-    return [*lint_steps(session), *write_steps(session)]

@@ -13,7 +13,6 @@ from fastmail_sieve.steps import (
     Session,
     Step,
     _lint_fragments,
-    build_steps,
     lint_steps,
     run_steps,
 )
@@ -166,12 +165,6 @@ def names(steps):
 class StepListTest(unittest.TestCase):
     def test_lint_is_the_whole_checklist_ending_with_the_warnings(self):
         self.assertEqual(names(lint_steps()), LINT_NAMES)
-
-    def test_push_runs_every_lint_step_first_then_pushes(self):
-        self.assertEqual(
-            names(build_steps()),
-            [*LINT_NAMES, "Push the managed blocks", "Verify with a fresh pull"],
-        )
 
     def test_offline_is_only_the_format_and_syntax_check(self):
         self.assertEqual(names(lint_steps(offline=True)), LINT_NAMES[:1])
