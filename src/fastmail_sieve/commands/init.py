@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fastmail_sieve.commands._options import confirm
 from fastmail_sieve.fastmail.blocks import CHANGED, get_script, set_blocks
-from fastmail_sieve.fastmail.credentials import gather, pick
+from fastmail_sieve.fastmail.credentials import LazySources, pick
 from fastmail_sieve.project import scaffold
 
 
@@ -36,7 +36,7 @@ def _ensure_unchanged(credentials, script):
 
 
 def _remote(args):
-    credentials = pick(gather(), session_required=True)
+    credentials = pick(LazySources(), session_required=True)
     script = get_script(credentials)
     if script.has_markers:
         if args.convert_markers:

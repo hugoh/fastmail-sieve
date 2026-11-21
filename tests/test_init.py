@@ -91,7 +91,7 @@ class InitCommandTest(InTempDir):
     def init(self, *argv, script=BARE, answer="y"):
         patches = [
             mock.patch(
-                "fastmail_sieve.commands.init.gather",
+                "fastmail_sieve.commands.init.LazySources",
                 return_value=[
                     (
                         "t",
@@ -164,7 +164,7 @@ class InitConvertMarkersTest(InTempDir):
         after = after if after is not None else script.convert_markers()
         patches = [
             mock.patch(
-                "fastmail_sieve.commands.init.gather",
+                "fastmail_sieve.commands.init.LazySources",
                 return_value=[
                     (
                         "t",
@@ -249,7 +249,7 @@ class InitConvertMarkersTest(InTempDir):
         )
         patches = [
             mock.patch(
-                "fastmail_sieve.commands.init.gather",
+                "fastmail_sieve.commands.init.LazySources",
                 return_value=[
                     (
                         "t",

@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastmail_sieve.fastmail.blocks import CHANGED, get_script, set_blocks
-from fastmail_sieve.fastmail.credentials import gather, pick
+from fastmail_sieve.fastmail.credentials import LazySources, pick
 from fastmail_sieve.fastmail.mailboxes import check_ids, check_names, fetch_mailboxes
 from fastmail_sieve.sieve.format import format_errors, format_files
 from fastmail_sieve.sieve.lint import check_fragments, check_markers, check_syntax
@@ -88,7 +88,7 @@ class Session:
 
     def credentials(self, session_required=True):
         if self._sources is None:
-            self._sources = gather()
+            self._sources = LazySources()
         return pick(self._sources, session_required)
 
     def fetch(self):

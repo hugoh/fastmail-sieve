@@ -114,7 +114,7 @@ class FolderChecksTest(unittest.TestCase):
             mock.patch(
                 "fastmail_sieve.steps.read_fragments", return_value=("", middle, "")
             ),
-            mock.patch("fastmail_sieve.steps.gather", return_value=SOURCES),
+            mock.patch("fastmail_sieve.steps.LazySources", return_value=SOURCES),
             mock.patch("fastmail_sieve.steps.fetch_mailboxes", self.fetch),
         )
         for patch in patches:
@@ -237,7 +237,7 @@ class SessionTest(unittest.TestCase):
         for name, value in (
             ("get_script", self.get_script),
             ("set_blocks", self.set_blocks),
-            ("gather", mock.Mock(return_value=SOURCES)),
+            ("LazySources", mock.Mock(return_value=SOURCES)),
             ("read_fragments", mock.Mock(return_value=("new;\n", "", ""))),
         ):
             patcher = mock.patch(f"fastmail_sieve.steps.{name}", value)
