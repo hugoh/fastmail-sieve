@@ -7,7 +7,7 @@ FRAGMENT_HEADERS = {
 }
 VARIABLES_TEMPLATE = """\
 # Plain-English meaning of the variables in the assembled Fastmail script.
-# `fastmail-sieve variables` fails when a variable is undefined, unused or
+# `fastmail-sieve lint` fails when a variable is undefined, unused or
 # undocumented: add an entry here when it reports a new one, for example:
 #
 # [stop]
