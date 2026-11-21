@@ -6,6 +6,7 @@ keychain) and Safari's and Chrome's cookies for fastmail.com. It needs the
 `auth` extra and is never run unless asked for.
 """
 
+import contextlib
 import shutil
 import sqlite3
 import subprocess
@@ -22,13 +23,26 @@ COOKIE_PREFIXES = ("__Http-s_", "__Host-s_")
 APP_COOKIES = Path.home() / "Library/Application Support/Fastmail/Cookies"
 APP_KEYCHAIN_SERVICE = "Fastmail Safe Storage"
 HOST_HASH_META_VERSION = 24
+DECRYPT_FAILED = (
+    "the Fastmail app cookie could not be decrypted: the keychain password or the "
+    "cookie format is not what this tool expects"
+)
 
 
 def decrypt_chromium_value(encrypted, password, strip_host_hash):
     key = PBKDF2(password, b"saltysalt", 16, count=1003)
-    plain = AES.new(key, AES.MODE_CBC, b" " * 16).decrypt(encrypted[3:])
-    plain = plain[: -plain[-1]]
-    return (plain[32:] if strip_host_hash else plain).decode()
+    body = encrypted[3:]
+    if not body or len(body) % 16:
+        raise ValueError(DECRYPT_FAILED)
+    plain = AES.new(key, AES.MODE_CBC, b" " * 16).decrypt(body)
+    padding = plain[-1]
+    if not 1 <= padding <= 16 or plain[-padding:] != bytes([padding]) * padding:
+        raise ValueError(DECRYPT_FAILED)
+    plain = plain[:-padding]
+    try:
+        return (plain[32:] if strip_host_hash else plain).decode()
+    except UnicodeDecodeError as error:
+        raise ValueError(DECRYPT_FAILED) from error
 
 
 def app_cookie():
@@ -43,13 +57,13 @@ def app_cookie():
     with tempfile.TemporaryDirectory() as tmp:
         copy = Path(tmp) / "Cookies"
         shutil.copy(APP_COOKIES, copy)
-        db = sqlite3.connect(copy)
-        version = int(
-            db.execute("select value from meta where key='version'").fetchone()[0]
-        )
-        rows = db.execute(
-            "select name, encrypted_value from cookies where host_key like '%fastmail.com'"
-        ).fetchall()
+        with contextlib.closing(sqlite3.connect(copy)) as db:
+            version = int(
+                db.execute("select value from meta where key='version'").fetchone()[0]
+            )
+            rows = db.execute(
+                "select name, encrypted_value from cookies where host_key like '%fastmail.com'"
+            ).fetchall()
     for name, encrypted in rows:
         if name.startswith(COOKIE_PREFIXES):
             value = decrypt_chromium_value(
