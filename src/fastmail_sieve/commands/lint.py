@@ -1,6 +1,6 @@
 from rich.console import Console
 
-from fastmail_sieve.commands._options import add_from_file
+from fastmail_sieve.commands._options import add_from_file, add_live
 from fastmail_sieve.steps import lint_steps, run_steps
 
 
@@ -28,6 +28,7 @@ def add_parser(subparsers):
     parser.add_argument(
         "--strict", action="store_true", help="fail when there are warnings"
     )
+    add_live(parser, "check")
     add_from_file(parser)
     parser.set_defaults(run=run)
 
@@ -38,5 +39,6 @@ def run(args):
         from_file=args.from_file,
         fix=args.fix,
         strict=args.strict,
+        live=args.live,
     )
     return run_steps(steps, Console(highlight=False))

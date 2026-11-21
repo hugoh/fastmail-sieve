@@ -191,6 +191,28 @@ class ConvertMarkersTest(unittest.TestCase):
         self.assertTrue(script.uses_legacy_markers)
 
 
+class MatchesTest(unittest.TestCase):
+    def test_a_file_without_a_final_newline_matches_what_was_stored(self):
+        stored = remote("", "", "keep;\n")
+        self.assertTrue(stored.matches(("", "", "keep;")))
+        self.assertTrue(stored.matches(("", "", "keep;\n")))
+
+    def test_different_text_does_not_match(self):
+        self.assertFalse(remote("", "", "keep;\n").matches(("", "", "stop;")))
+
+    def test_blank_lines_at_the_end_still_count(self):
+        stored = remote("a;\n\n")
+        self.assertTrue(stored.matches(("a;\n\n", "", "")))
+        self.assertFalse(stored.matches(("a;\n", "", "")))
+        self.assertFalse(remote("a;\n").matches(("a;\n\n", "", "")))
+
+    def test_what_with_fragments_writes_always_matches_its_input(self):
+        for fragments in (("a;", "b;", "c;"), ("", "x;\n", ""), ("a;\n\n", "", "z;")):
+            self.assertTrue(
+                remote().with_fragments(*fragments).matches(fragments), fragments
+            )
+
+
 class ManagedBlocksTest(unittest.TestCase):
     BARE = RemoteScript("R", "# my start code", "B", "", "U", "")
 

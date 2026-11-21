@@ -4,10 +4,14 @@ import unittest
 from unittest import mock
 
 from fastmail_sieve.fastmail.credentials import (
-    check_credentials,
+    KEYCHAIN_SERVICE,
+    LEGACY_KEYCHAIN_SERVICE,
+    LazySources,
     gather,
     load_credentials,
     pick,
+    read_keychain,
+    store_keychain,
 )
 
 SESSION_ENV = {
@@ -29,20 +33,46 @@ def command_result(payload, returncode=0):
     )
 
 
-class CheckCredentialsTest(unittest.TestCase):
-    def test_complete_credentials_pass(self):
-        self.assertEqual(check_credentials(KEYCHAIN), KEYCHAIN)
+class KeychainNameTest(unittest.TestCase):
+    def fake_keyring(self, stored):
+        keyring = mock.Mock()
+        keyring.get_password.side_effect = lambda service, field: stored.get(
+            service, {}
+        ).get(field)
+        return keyring
 
-    def test_missing_values_name_the_fix(self):
-        with self.assertRaisesRegex(RuntimeError, r"token.*fastmail-sieve auth"):
-            check_credentials({**KEYCHAIN, "token": None})
+    def read(self, stored):
+        keyring = self.fake_keyring(stored)
+        with mock.patch.dict("sys.modules", {"keyring": keyring}):
+            return read_keychain(), keyring
 
-    def test_an_empty_value_counts_as_missing(self):
-        with self.assertRaisesRegex(RuntimeError, "cookie"):
-            check_credentials({**KEYCHAIN, "cookie": ""})
+    def test_the_tools_own_name_is_used(self):
+        self.assertEqual(KEYCHAIN_SERVICE, "fastmail-sieve")
 
-    def test_the_username_is_informational_and_not_required(self):
-        self.assertTrue(check_credentials({"token": "t", "cookie": "c"}))
+    def test_values_under_the_old_name_are_still_read(self):
+        found, _ = self.read({LEGACY_KEYCHAIN_SERVICE: KEYCHAIN})
+        self.assertEqual(found, KEYCHAIN)
+
+    def test_the_new_name_wins_over_the_old_one(self):
+        newer = {**KEYCHAIN, "token": "fma1-new"}
+        found, _ = self.read(
+            {KEYCHAIN_SERVICE: newer, LEGACY_KEYCHAIN_SERVICE: KEYCHAIN}
+        )
+        self.assertEqual(found["token"], "fma1-new")
+
+    def test_the_old_name_is_not_read_when_the_new_one_has_the_login(self):
+        _, keyring = self.read(
+            {KEYCHAIN_SERVICE: KEYCHAIN, LEGACY_KEYCHAIN_SERVICE: KEYCHAIN}
+        )
+        services = {call.args[0] for call in keyring.get_password.call_args_list}
+        self.assertEqual(services, {KEYCHAIN_SERVICE})
+
+    def test_new_logins_are_stored_under_the_new_name(self):
+        keyring = mock.Mock()
+        with mock.patch.dict("sys.modules", {"keyring": keyring}):
+            store_keychain("me", "t", "c")
+        services = {call.args[0] for call in keyring.set_password.call_args_list}
+        self.assertEqual(services, {KEYCHAIN_SERVICE})
 
 
 class GatherTest(unittest.TestCase):
@@ -196,6 +226,63 @@ class PickTest(unittest.TestCase):
     def test_the_picked_credentials_carry_no_stray_fields(self):
         chosen = pick(self.sources(**SESSION_ENV))
         self.assertEqual(set(chosen), {"token", "cookie", "username", "source", "kind"})
+
+
+class LazySourcesTest(unittest.TestCase):
+    ENV_AND_STALE_HELPER = {**SESSION_ENV, "FASTMAIL_SIEVE_CREDENTIAL_COMMAND": "false"}
+
+    def test_a_working_environment_never_touches_the_helper_or_the_keychain(self):
+        run = mock.Mock()
+        read = mock.Mock(return_value=KEYCHAIN)
+        sources = LazySources(environ=self.ENV_AND_STALE_HELPER, keychain=read, run=run)
+        self.assertEqual(pick(sources)["source"], "environment")
+        run.assert_not_called()
+        read.assert_not_called()
+
+    def test_a_stale_helper_command_does_not_break_a_run_that_has_the_login(self):
+        failing = command_result({"token": "x"}, returncode=1)
+        sources = LazySources(
+            environ=self.ENV_AND_STALE_HELPER, keychain=keychain(None), run=failing
+        )
+        self.assertEqual(pick(sources)["token"], "fma1-env")
+
+    def test_later_sources_are_read_only_when_the_earlier_ones_have_nothing(self):
+        read = mock.Mock(return_value=KEYCHAIN)
+        self.assertEqual(
+            pick(LazySources(environ={}, keychain=read))["source"], "keychain"
+        )
+        read.assert_called_once()
+
+    def test_what_was_read_is_remembered_across_picks(self):
+        read = mock.Mock(return_value=KEYCHAIN)
+        sources = LazySources(environ={}, keychain=read)
+        pick(sources)
+        pick(sources, session_required=False)
+        list(sources)
+        read.assert_called_once()
+
+    def test_folders_prefer_an_api_token_so_a_later_source_may_be_needed(self):
+        run = command_result({"api_token": "api-cmd"})
+        sources = LazySources(
+            environ={**SESSION_ENV, "FASTMAIL_SIEVE_CREDENTIAL_COMMAND": "helper"},
+            keychain=keychain(None),
+            run=run,
+        )
+        chosen = pick(sources, session_required=False)
+        self.assertEqual(
+            (chosen["kind"], chosen["source"]), ("api", "credential command")
+        )
+        run.assert_called_once()
+
+    def test_a_failing_helper_is_still_an_error_when_it_is_reached(self):
+        failing = command_result({}, returncode=3)
+        sources = LazySources(
+            environ={"FASTMAIL_SIEVE_CREDENTIAL_COMMAND": "helper"},
+            keychain=keychain(KEYCHAIN),
+            run=failing,
+        )
+        with self.assertRaisesRegex(RuntimeError, "exit status 3"):
+            pick(sources)
 
 
 class LoadCredentialsTest(unittest.TestCase):

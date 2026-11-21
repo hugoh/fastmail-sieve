@@ -1,13 +1,15 @@
 import re
 
 from fastmail_sieve.fastmail.jmap import MAIL, invoke, jmap
-from fastmail_sieve.sieve.format import sieve_folder_name
+from fastmail_sieve.sieve.format import canonical_inbox, sieve_folder_name
 from fastmail_sieve.ui.tables import strip_variation_selectors
 
 USING = ["urn:ietf:params:jmap:core", MAIL]
 REFERENCE = re.compile(
-    r':mailboxid\s+"([^"]+)"(?:\s+"([^"]*)")?|mailboxidexists\s+"([^"]+)"'
+    r':mailboxid\s+"([^"]+)"(?:\s+"([^"]*)")?'
+    r'|mailboxidexists\s+(\[[^\]]*\]|"[^"]+")'
 )
+QUOTED = re.compile(r'"([^"]+)"')
 
 
 def fetch_mailboxes(credentials, call=jmap):
@@ -39,7 +41,10 @@ def references(text):
     """Return (id, fallback name or None) for every mailbox id the script uses."""
     found = []
     for match in REFERENCE.finditer(text):
-        found.append((match.group(1) or match.group(3), match.group(2)))
+        if match.group(1):
+            found.append((match.group(1), match.group(2)))
+        else:
+            found.extend((ident, None) for ident in QUOTED.findall(match.group(3)))
     return found
 
 
@@ -62,7 +67,7 @@ def _missing(name, mailbox_id, fallback):
 
 def _misnamed(name, mailbox_id, fallback, box):
     expected = sieve_folder_name(box["path"])
-    if fallback is None or _plain(fallback) == _plain(expected):
+    if fallback is None or _plain(canonical_inbox(fallback)) == _plain(expected):
         return None
     return (
         f'{name}: mailbox id {mailbox_id} ({box["path"]}) names it "{fallback}",'

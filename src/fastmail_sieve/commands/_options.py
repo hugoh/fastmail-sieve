@@ -16,6 +16,16 @@ def add_from_file(parser, what="the script Fastmail has"):
     )
 
 
+def add_live(parser, what):
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help=f"{what} the script exactly as Fastmail has it now, ignoring your "
+        "rules/ files (the default is what a push would produce: Fastmail's "
+        "script with your rules in the managed blocks)",
+    )
+
+
 def add_color(parser):
     parser.add_argument(
         "--color", choices=COLORS, default="auto", help="colour the output"

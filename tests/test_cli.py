@@ -65,6 +65,15 @@ class ParserTest(unittest.TestCase):
             )
             self.assertIsNone(parse(command).from_file, command)
 
+    def test_lint_and_explain_can_target_the_live_script(self):
+        for command in ("lint", "explain"):
+            self.assertTrue(parse(command, "--live").live, command)
+            self.assertFalse(parse(command).live, command)
+
+    def test_pull_can_skip_the_question(self):
+        self.assertTrue(parse("pull", "--yes").yes)
+        self.assertFalse(parse("pull").yes)
+
     def test_push_strict_and_folders_filter(self):
         self.assertTrue(parse("push", "--strict").strict)
         self.assertFalse(parse("push").strict)
@@ -145,6 +154,21 @@ class MainTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(out, "")
         self.assertEqual(err.strip(), "✗ Missing token in the keychain")
+
+    def test_file_and_value_errors_are_one_line_failures_too(self):
+        for error in (FileNotFoundError("nope.sieve"), ValueError("not valid here")):
+            with (
+                self.subTest(error=type(error).__name__),
+                mock.patch(
+                    "fastmail_sieve.commands.folders.load_credentials",
+                    side_effect=error,
+                ),
+            ):
+                code, out, err = self.run_main("folders")
+            self.assertEqual(code, 1)
+            self.assertEqual(out, "")
+            self.assertEqual(len(err.strip().splitlines()), 1)
+            self.assertTrue(err.startswith("✗ "))
 
     def test_a_command_exit_code_is_returned(self):
         with mock.patch("fastmail_sieve.commands.lint.run_steps", return_value=1):

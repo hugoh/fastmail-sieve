@@ -50,6 +50,12 @@ risks described there. `fastmail-sieve doctor` tells you what works for your
 account, and whether Fastmail now advertises an official Sieve API (RFC 9661)
 that this tool could use instead.
 
+Fastmail's [API Terms of Service](https://www.fastmail.com/policies/api-terms-of-service/)
+list "use any unpublished APIs" among the prohibited uses. `SieveBlocks` is
+unpublished. It is not clear whether that clause covers a personal tool that
+only works on your own account, and this project is not a lawyer: read the
+terms and decide for yourself before you use it.
+
 ## Install
 
 ```sh
@@ -81,14 +87,23 @@ fastmail-sieve push              # shows the diff, asks, pushes, verifies
 | `init` | Create `rules/`, `variables.toml` and a `.gitignore` line; never overwrites. `--remote` also adds the managed blocks to Fastmail's script (once, asks first); `--convert-markers` also replaces Sieve-Sync's marker comments with this tool's own (one way) |
 | `auth` | Check the token and cookie against Fastmail and store them in the keychain. `auth status` shows which credentials are available and where each comes from |
 | `doctor` | Check the project files, the credentials and what Fastmail lets them do |
-| `pull` | Overwrite the three fragments with Fastmail's managed blocks (commit first: local edits are lost) |
+| `pull` | Overwrite the three fragments with Fastmail's managed blocks. It lists the files with local changes and asks first (`--yes` skips the question) |
 | `push` | Check everything, show the diff, ask, push the managed blocks, then verify with a fresh pull. `--yes` skips the question |
 | `diff` | Show what a push would change (`+` added, `-` removed) |
 | `assemble` | Print the full script (Fastmail's parts plus your fragments); `--output FILE` writes it |
-| `lint` | The one check, as a checklist that stops at the first failure: format and syntax of your rules, then the assembled script (syntax, markers, variables), the folder stable ids and names, and finally the warnings (overlaps, duplicate or conflicting UI rules, disabled UI rules, stale variable descriptions), which are shown but do not fail. `--fix` reformats your rules first (indentation and `:mailboxid` folder names); `--strict` makes warnings fail; `--offline` skips everything that needs Fastmail; `--from-file FILE` checks a saved script |
+| `lint` | The one check, as a checklist that stops at the first failure: format and syntax of your rules, then the assembled script (syntax, markers, variables), the folder stable ids and names, and finally the warnings (overlaps, duplicate or conflicting UI rules, disabled UI rules, stale variable descriptions), which are shown but do not fail. `--fix` reformats your rules first (indentation and `:mailboxid` folder names); `--strict` makes warnings fail; `--offline` skips everything that needs Fastmail; `--from-file FILE` checks a saved script; `--live` checks Fastmail's script exactly as it is now and ignores your files (see below) |
 | `explain [TOPIC]` | `rules` (the default): a summary table, then your rules and your UI rules as tables. `script`: the whole script in execution order. `variables`: the script's variables and where they are set and read |
 | `migrate` | Print custom rules equivalent to your enabled Fastmail UI rules |
 | `folders` | List Fastmail folders and their ids (`folders tax` filters by path) |
+
+### Local and live
+
+Two views of the script exist. **Local** (the default) is what a `push`
+would produce: Fastmail's script with your `rules/` files in the managed
+blocks. **Live** is Fastmail's script exactly as it is now. `lint --live` and
+`explain --live` judge the live one and never read your rules, so they catch
+what only exists there: a folder you deleted in Fastmail, or a rule made in
+Fastmail's own editor. `diff` shows how the two differ.
 
 Commands that need the script (`assemble`, `diff`, `explain`, `lint`,
 `migrate`) fetch it themselves; pass `--from-file FILE` to use a

@@ -62,6 +62,24 @@ class IndentTest(unittest.TestCase):
         )
 
 
+class InlineBlockCommentTest(unittest.TestCase):
+    def test_braces_inside_an_inline_block_comment_are_not_counted(self):
+        text = "if true { /* { */\n  keep;\n}\nstop;"
+        self.assertEqual(format_sieve(text), text)
+
+    def test_a_closing_brace_in_an_inline_comment_does_not_close_the_block(self):
+        text = "if true { /* } */\n  keep;\n}"
+        self.assertEqual(format_sieve(text), text)
+
+    def test_code_after_an_inline_comment_still_counts(self):
+        text = "/* note */ if true {\n  keep;\n}"
+        self.assertEqual(format_sieve(text), text)
+
+    def test_a_block_comment_marker_inside_a_string_is_text(self):
+        text = 'if header :contains "x" "/* {" {\n  keep;\n}'
+        self.assertEqual(format_sieve(text), text)
+
+
 class FolderNameTest(unittest.TestCase):
     def name(self, written):
         text = f'fileinto :mailboxid "P" "{written}";\n'
@@ -79,8 +97,13 @@ class FolderNameTest(unittest.TestCase):
         self.assertEqual(self.name("Inbox/Shopping"), "INBOX.Inbox.Shopping")
         self.assertEqual(self.name("inbox.Shopping"), "INBOX.Inbox.Shopping")
 
-    def test_a_doubled_inbox_is_corrected(self):
-        self.assertEqual(self.name("INBOX.INBOX.Shopping"), "INBOX.Inbox.Shopping")
+    def test_the_case_of_inbox_as_second_segment_is_left_as_written(self):
+        for written in (
+            "INBOX.INBOX.Shopping",
+            "INBOX.Inbox.Shopping",
+            "INBOX.inbox.Shopping",
+        ):
+            self.assertEqual(self.name(written), written)
 
     def test_the_inbox_itself_is_just_inbox(self):
         self.assertEqual(self.name("Inbox"), "INBOX")

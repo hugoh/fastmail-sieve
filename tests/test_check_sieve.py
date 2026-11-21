@@ -1,6 +1,7 @@
 import unittest
 
 from fastmail_sieve.sieve.lint import check_fragments, check_markers, check_syntax
+from fastmail_sieve.sieve.script import MARKER_START
 
 REQUIRE = (
     'require ["fileinto", "variables", "vnd.cyrus.jmapquery", "mailboxid", '
@@ -73,6 +74,14 @@ class MarkerStylesLintTest(unittest.TestCase):
     def test_fragments_may_not_contain_either_style(self):
         for text in (NEW_START, START):
             self.assertRegex(check_fragments("", text, ""), "managed-block markers")
+
+
+class OddMarkerCountTest(unittest.TestCase):
+    def test_an_odd_number_of_markers_is_a_message_not_an_exception(self):
+        for count in (1, 3, 5):
+            text = "\n".join([MARKER_START] * count)
+            with self.subTest(count=count):
+                self.assertIn("expected 3 start/end marker pairs", check_markers(text))
 
 
 class MarkersTest(unittest.TestCase):

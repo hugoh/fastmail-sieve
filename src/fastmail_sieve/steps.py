@@ -2,15 +2,22 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from fastmail_sieve.fastmail.blocks import get_script, set_blocks
-from fastmail_sieve.fastmail.credentials import gather, pick
+from fastmail_sieve.fastmail.blocks import CHANGED, get_script, set_blocks
+from fastmail_sieve.fastmail.credentials import LazySources, pick
 from fastmail_sieve.fastmail.mailboxes import check_ids, check_names, fetch_mailboxes
 from fastmail_sieve.sieve.format import format_errors, format_files
 from fastmail_sieve.sieve.lint import check_fragments, check_markers, check_syntax
 from fastmail_sieve.sieve.report import build_rules, disabled_ui_rules
-from fastmail_sieve.sieve.script import assemble, fragment_files, read_fragments
+from fastmail_sieve.sieve.script import (
+    assemble,
+    fragment_files,
+    live_fragments,
+    read_fragments,
+)
 from fastmail_sieve.sieve.variables import load_report, load_variable_docs
 from fastmail_sieve.sieve.warnings import collect_warnings
+
+LIVE_SCRIPT = "Fastmail's script"
 
 
 @dataclass
@@ -80,7 +87,8 @@ class Session:
     """One run's view of Fastmail: the remote script, your assembled script, and
     the steps that read or write them."""
 
-    def __init__(self):
+    def __init__(self, live=False):
+        self.live = live
         self.script = None
         self.remote = None
         self.assembled = None
@@ -88,7 +96,7 @@ class Session:
 
     def credentials(self, session_required=True):
         if self._sources is None:
-            self._sources = gather()
+            self._sources = LazySources()
         return pick(self._sources, session_required)
 
     def fetch(self):
@@ -101,8 +109,25 @@ class Session:
         return Result()
 
     def assemble(self):
-        self.assembled = assemble(self.remote, *read_fragments())
+        if self.live:
+            self.assembled = self.remote
+        else:
+            self.assembled = assemble(self.remote, *read_fragments())
         return Result()
+
+    def fragment_texts(self):
+        """The three fragments being judged: your files, or the live blocks."""
+        return live_fragments(self.assembled) if self.live else read_fragments()
+
+    def rules_files(self):
+        """name -> text of the rules being judged."""
+        return dict(zip(fragment_files(), self.fragment_texts(), strict=True))
+
+    def folder_sources(self):
+        """name -> text to look for folder references in."""
+        if self.live:
+            return {LIVE_SCRIPT: self.assembled}
+        return self.rules_files()
 
     def check_syntax(self):
         return Result(errors=_errors(check_syntax(self.assembled)))
@@ -110,19 +135,16 @@ class Session:
     def check_markers(self):
         return Result(errors=_errors(check_markers(self.assembled)))
 
+    def _variable_report(self):
+        return load_report(self.assembled, self.fragment_texts())
+
     def check_variables(self):
-        return Result(errors=load_report(self.assembled).errors)
+        return Result(errors=self._variable_report().errors)
 
     def warnings(self, strict=False):
-        rules = build_rules(
-            dict(zip(fragment_files(), read_fragments(), strict=True)),
-            self.assembled,
-            load_variable_docs(),
-        )
+        rules = build_rules(self.rules_files(), self.assembled, load_variable_docs())
         found = collect_warnings(
-            rules,
-            disabled_ui_rules(self.assembled),
-            load_report(self.assembled).warnings,
+            rules, disabled_ui_rules(self.assembled), self._variable_report().warnings
         )
         lines = [f"{kind}: {text}" for kind, text in found]
         if strict and lines:
@@ -134,11 +156,13 @@ class Session:
         updated = script.with_fragments(*read_fragments())
         if updated.same_blocks(script):
             return Result(detail="no change; nothing to push")
+        if not get_script(self.credentials()).same_blocks(script):
+            return Result(errors=[CHANGED])
         set_blocks(self.credentials(), updated)
         return Result(detail="pushed the managed blocks")
 
     def verify(self):
-        if get_script(self.credentials()).fragments != read_fragments():
+        if not get_script(self.credentials()).matches(read_fragments()):
             return Result(
                 errors=["Fastmail's managed blocks differ from the local fragments"]
             )
@@ -157,9 +181,7 @@ class FolderChecks:
             self._mailboxes = fetch_mailboxes(
                 self._session.credentials(session_required=False)
             )
-        return self._mailboxes, dict(
-            zip(fragment_files(), read_fragments(), strict=True)
-        )
+        return self._mailboxes, self._session.folder_sources()
 
     def check_ids(self):
         count, problems = check_ids(*self._fragments())
@@ -180,12 +202,23 @@ def _count(count, one, many):
     return f"{count} {one if count == 1 else many}"
 
 
-def lint_steps(session=None, *, offline=False, from_file=None, fix=False, strict=False):
+def lint_steps(
+    session=None, *, offline=False, from_file=None, fix=False, strict=False, live=False
+):
     """Every check, in order. `offline` skips whatever needs Fastmail (everything
-    but your rules, unless `from_file` supplies the script); `fix` formats first."""
-    session = session or Session()
+    but your rules, unless `from_file` supplies the script); `fix` formats first.
+    `live` judges Fastmail's script as it is and never looks at your rules."""
+    if live and fix:
+        raise RuntimeError("--live checks Fastmail's script: --fix cannot change it")
+    if live and offline and not from_file:
+        raise RuntimeError(
+            "--live needs Fastmail: give --from-file to check a saved copy"
+        )
+    session = session or Session(live=live)
+    scope = "live script" if live else "assembled script"
     steps = [Step("Format your rules", _format_rules)] if fix else []
-    steps.append(Step("Valid format and syntax in your rules", _lint_fragments))
+    if not live:
+        steps.append(Step("Valid format and syntax in your rules", _lint_fragments))
     if offline and not from_file:
         return steps
     if from_file:
@@ -196,10 +229,13 @@ def lint_steps(session=None, *, offline=False, from_file=None, fix=False, strict
         steps.append(
             Step("Fetch Fastmail's generated script", session.fetch, slow=True)
         )
+    if not live:
+        steps.append(Step("Assemble the full script", session.assemble))
+    else:
+        steps.append(Step("Use Fastmail's script as it is", session.assemble))
     steps += [
-        Step("Assemble the full script", session.assemble),
-        Step("Valid syntax in the assembled script", session.check_syntax),
-        Step("Valid markers in the assembled script", session.check_markers),
+        Step(f"Valid syntax in the {scope}", session.check_syntax),
+        Step(f"Valid markers in the {scope}", session.check_markers),
         Step("Valid variables", session.check_variables),
     ]
     if not offline:
@@ -218,8 +254,3 @@ def write_steps(session=None):
         Step("Push the managed blocks", session.push, slow=True),
         Step("Verify with a fresh pull", session.verify, slow=True),
     ]
-
-
-def build_steps():
-    session = Session()
-    return [*lint_steps(session), *write_steps(session)]

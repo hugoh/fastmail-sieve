@@ -22,6 +22,12 @@ NO_BLOCKS = (
 )
 
 
+CHANGED = (
+    "Fastmail's managed blocks changed while you were deciding: "
+    "run the command again to see the new diff"
+)
+
+
 def _markers(block):
     """The (start, end) marker pair a block uses, new style first, or None."""
     for start, end in MARKER_PAIRS:
@@ -63,13 +69,17 @@ def _fragment(block):
     return block[block.index(start) + len(start) : block.index(end)].removeprefix("\n")
 
 
+def _stored(fragment):
+    """How a fragment is kept in a block: always ending in a newline."""
+    return fragment + "\n" if fragment and not fragment.endswith("\n") else fragment
+
+
 def _with_fragment(block, fragment):
     markers = _markers(block)
     if markers is None:
         raise RuntimeError(NO_BLOCKS)
     start, end = markers
-    if fragment and not fragment.endswith("\n"):
-        fragment += "\n"
+    fragment = _stored(fragment)
     before = block[: block.index(start)]
     after = block[block.index(end) + len(end) :]
     return f"{before}{start}\n{fragment}{end}{after}".strip()
@@ -113,6 +123,10 @@ class RemoteScript:
     @property
     def fragments(self):
         return tuple(_fragment(block) for block in (self.start, self.middle, self.end))
+
+    def matches(self, fragments):
+        """Whether the blocks hold these fragments, the way they would be stored."""
+        return self.fragments == tuple(_stored(f) for f in fragments)
 
     def with_fragments(self, top, middle, bottom):
         return replace(

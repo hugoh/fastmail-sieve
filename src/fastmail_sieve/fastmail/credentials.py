@@ -4,7 +4,8 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 
-KEYCHAIN_SERVICE = "fastmail-sieve-rules"
+KEYCHAIN_SERVICE = "fastmail-sieve"
+LEGACY_KEYCHAIN_SERVICE = "fastmail-sieve-rules"
 CREDENTIAL_FIELDS = ("username", "token", "cookie")
 ENV_TOKEN = "FASTMAIL_SIEVE_TOKEN"
 ENV_COOKIE = "FASTMAIL_SIEVE_COOKIE"
@@ -14,21 +15,16 @@ COMMAND_TIMEOUT_SECONDS = 60
 TIER_LABELS = {"session": "session token + cookie", "api": "API token"}
 
 
-def check_credentials(values):
-    missing = [field for field in ("token", "cookie") if not values.get(field)]
-    if missing:
-        raise RuntimeError(
-            f"Missing {', '.join(missing)} in the keychain: run `fastmail-sieve auth`"
-        )
-    return values
-
-
 def read_keychain():
     """The stored values, or None where there is no usable keychain (headless Linux, CI)."""
     try:
         import keyring
 
-        return {f: keyring.get_password(KEYCHAIN_SERVICE, f) for f in CREDENTIAL_FIELDS}
+        for service in (KEYCHAIN_SERVICE, LEGACY_KEYCHAIN_SERVICE):
+            values = {f: keyring.get_password(service, f) for f in CREDENTIAL_FIELDS}
+            if any(values.values()):
+                return values
+        return values
     except Exception:
         return None
 
@@ -130,6 +126,32 @@ def gather(environ=None, keychain=None, run=subprocess.run):
     return [(name, found) for name, found in _sources(environ, keychain, run) if found]
 
 
+class LazySources:
+    """Sources with credentials, read one at a time and remembered. A later source
+    (a helper command, the keychain) is touched only if the earlier ones did not
+    have what was asked for, so a stale helper cannot break a run that has its
+    login in the environment."""
+
+    def __init__(self, environ=None, keychain=None, run=subprocess.run):
+        environ = os.environ if environ is None else environ
+        keychain = keychain or read_keychain
+        self._found = (
+            (name, found) for name, found in _sources(environ, keychain, run) if found
+        )
+        self._seen = []
+
+    def __iter__(self):
+        index = 0
+        while True:
+            if index == len(self._seen):
+                following = next(self._found, None)
+                if following is None:
+                    return
+                self._seen.append(following)
+            yield self._seen[index]
+            index += 1
+
+
 def _chosen(source, credentials, kind):
     return {**credentials, "source": source, "kind": kind}
 
@@ -173,12 +195,7 @@ def pick(gathered, session_required=True):
 def load_credentials(
     session_required=True, environ=None, keychain=None, run=subprocess.run
 ):
-    environ = os.environ if environ is None else environ
-    keychain = keychain or read_keychain
-    sources = (
-        (name, found) for name, found in _sources(environ, keychain, run) if found
-    )
-    return pick(sources, session_required)
+    return pick(LazySources(environ, keychain, run), session_required)
 
 
 @dataclass(frozen=True)

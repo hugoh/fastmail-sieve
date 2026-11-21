@@ -47,6 +47,16 @@ def all_problems(boxes, files):
     return check_ids(boxes, files)[1] + check_names(boxes, files)[1]
 
 
+class ListFormReferencesTest(unittest.TestCase):
+    def test_every_id_of_a_mailboxidexists_list_is_found(self):
+        text = 'if mailboxidexists ["A1", "B2","C3"] { keep; }'
+        self.assertEqual(references(text), [("A1", None), ("B2", None), ("C3", None)])
+
+    def test_a_single_id_and_the_list_form_can_mix(self):
+        text = 'mailboxidexists "A1";\nmailboxidexists ["B2"];\nfileinto :mailboxid "C3" "x";'
+        self.assertEqual([found for found, _ in references(text)], ["A1", "B2", "C3"])
+
+
 class CheckTest(unittest.TestCase):
     def problems(self, text):
         return all_problems(BOXES, {"rules/middle.sieve": text})
@@ -66,8 +76,17 @@ class CheckTest(unittest.TestCase):
             self.problems('fileinto :mailboxid "P-sh" "INBOX.Inbox.Shopping";'), []
         )
         self.assertEqual(self.problems('fileinto :mailboxid "P-in" "INBOX";'), [])
+
+    def test_inbox_is_case_insensitive_as_the_second_segment(self):
+        for written in ("INBOX.INBOX.Shopping", "INBOX.inbox.Shopping"):
+            with self.subTest(written=written):
+                self.assertEqual(
+                    self.problems(f'fileinto :mailboxid "P-sh" "{written}";'), []
+                )
+
+    def test_a_real_difference_next_to_inbox_is_still_reported(self):
         self.assertEqual(
-            len(self.problems('fileinto :mailboxid "P-sh" "INBOX.INBOX.Shopping";')), 1
+            len(self.problems('fileinto :mailboxid "P-sh" "INBOX.INBOX.Cart";')), 1
         )
 
     def test_emoji_variation_selectors_do_not_matter(self):

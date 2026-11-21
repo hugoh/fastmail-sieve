@@ -53,6 +53,14 @@ def split(text):
     )
 
 
+def live_fragments(text):
+    """The text of the three managed blocks of a script, or empty ones if it has none."""
+    try:
+        return split(text)
+    except ValueError:
+        return ("", "", "")
+
+
 def assemble(skeleton, top, middle, bottom):
     fragments = (top, middle, bottom)
     if any(contains_marker(f) for f in fragments):

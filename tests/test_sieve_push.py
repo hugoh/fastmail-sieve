@@ -13,7 +13,6 @@ from fastmail_sieve.steps import (
     Session,
     Step,
     _lint_fragments,
-    build_steps,
     lint_steps,
     run_steps,
 )
@@ -114,7 +113,7 @@ class FolderChecksTest(unittest.TestCase):
             mock.patch(
                 "fastmail_sieve.steps.read_fragments", return_value=("", middle, "")
             ),
-            mock.patch("fastmail_sieve.steps.gather", return_value=SOURCES),
+            mock.patch("fastmail_sieve.steps.LazySources", return_value=SOURCES),
             mock.patch("fastmail_sieve.steps.fetch_mailboxes", self.fetch),
         )
         for patch in patches:
@@ -166,12 +165,6 @@ def names(steps):
 class StepListTest(unittest.TestCase):
     def test_lint_is_the_whole_checklist_ending_with_the_warnings(self):
         self.assertEqual(names(lint_steps()), LINT_NAMES)
-
-    def test_push_runs_every_lint_step_first_then_pushes(self):
-        self.assertEqual(
-            names(build_steps()),
-            [*LINT_NAMES, "Push the managed blocks", "Verify with a fresh pull"],
-        )
 
     def test_offline_is_only_the_format_and_syntax_check(self):
         self.assertEqual(names(lint_steps(offline=True)), LINT_NAMES[:1])
@@ -237,7 +230,7 @@ class SessionTest(unittest.TestCase):
         for name, value in (
             ("get_script", self.get_script),
             ("set_blocks", self.set_blocks),
-            ("gather", mock.Mock(return_value=SOURCES)),
+            ("LazySources", mock.Mock(return_value=SOURCES)),
             ("read_fragments", mock.Mock(return_value=("new;\n", "", ""))),
         ):
             patcher = mock.patch(f"fastmail_sieve.steps.{name}", value)
@@ -328,6 +321,18 @@ class SessionTest(unittest.TestCase):
             (self.script.require, "### blocked", "### rules"),
         )
 
+    def test_push_stops_when_fastmail_changed_since_the_diff(self):
+        session = self.fetched()
+        self.fresh = [remote_script(start="an edit made in Fastmail's editor\n")]
+        result = session.push()
+        self.assertRegex(result.errors[0], "changed while you were deciding")
+        self.set_blocks.assert_not_called()
+
+    def test_push_reads_again_right_before_it_writes(self):
+        session = self.fetched()
+        session.push()
+        self.assertEqual(self.get_script.call_count, 2)
+
     def test_push_with_nothing_to_change_writes_nothing(self):
         self.script = remote_script(start="new;\n")
         self.fresh = [self.script]
@@ -339,6 +344,16 @@ class SessionTest(unittest.TestCase):
         session = self.fetched()
         self.fresh = [remote_script(start="new;\n")]
         self.assertEqual(session.verify().errors, [])
+
+    def test_verify_accepts_a_file_without_a_final_newline_after_a_push(self):
+        with mock.patch(
+            "fastmail_sieve.steps.read_fragments", return_value=("keep;", "", "")
+        ):
+            session = self.fetched()
+            self.assertEqual(session.push().errors, [])
+            [_, sent], _ = self.set_blocks.call_args
+            self.fresh = [sent]
+            self.assertEqual(session.verify().errors, [])
 
     def test_verify_fails_when_the_blocks_still_differ(self):
         session = self.fetched()

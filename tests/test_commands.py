@@ -8,7 +8,12 @@ from unittest import mock
 
 from fastmail_sieve.cli import main
 from fastmail_sieve.sieve.lint import FASTMAIL_REQUIRE
-from fastmail_sieve.sieve.script import MARKER_END, MARKER_START, fragment_files
+from fastmail_sieve.sieve.script import (
+    MARKER_END,
+    MARKER_START,
+    assemble,
+    fragment_files,
+)
 from fastmail_sieve.steps import Result, Step
 from tests.test_sieve_blocks import skeleton
 
@@ -101,19 +106,163 @@ class DiffCommandTest(Project):
         self.assertEqual((code, out), (0, ""))
 
 
+REMOTE_BLOCKS = skeleton("t;\n", "m;\n", "b;\n")
+
+
 class PullCommandTest(Project):
-    def test_overwrites_the_fragments_with_the_remote_blocks(self):
-        Path("saved.sieve").write_text(skeleton("t;\n", "m;\n", "b;\n"))
-        with mock.patch(
-            "fastmail_sieve.commands.pull.load_remote",
-            return_value=Path("saved.sieve").read_text(),
+    def pull(self, *argv, answer="y"):
+        with (
+            mock.patch(
+                "fastmail_sieve.commands.pull.load_remote", return_value=REMOTE_BLOCKS
+            ),
+            mock.patch(
+                "builtins.input",
+                side_effect=[answer] if answer != "EOF" else EOFError(),
+            ) as ask,
         ):
-            code, _, _ = run("pull")
+            code, out, err = run("pull", *argv)
+        return code, out + err, ask
+
+    def files(self):
+        return [Path(name).read_text() for name in fragment_files()]
+
+    def test_empty_fragments_are_filled_without_asking(self):
+        code, _, ask = self.pull()
         self.assertEqual(code, 0)
-        self.assertEqual(
-            [Path(name).read_text() for name in fragment_files()],
-            ["t;\n", "m;\n", "b;\n"],
+        self.assertEqual(self.files(), ["t;\n", "m;\n", "b;\n"])
+        ask.assert_not_called()
+
+    def test_the_untouched_scaffold_is_replaced_without_asking(self):
+        from fastmail_sieve.project import scaffold
+
+        for name in fragment_files():
+            Path(name).unlink()
+        scaffold(Path("."))
+        code, _, ask = self.pull()
+        self.assertEqual((code, self.files()), (0, ["t;\n", "m;\n", "b;\n"]))
+        ask.assert_not_called()
+
+    def test_missing_files_are_created_without_asking(self):
+        Path(fragment_files()[2]).unlink()
+        code, _, ask = self.pull()
+        self.assertEqual((code, self.files()[2]), (0, "b;\n"))
+        ask.assert_not_called()
+
+    def test_nothing_to_do_when_they_already_match(self):
+        for name, text in zip(fragment_files(), ("t;\n", "m;\n", "b;\n"), strict=True):
+            Path(name).write_text(text)
+        code, out, ask = self.pull()
+        self.assertEqual(code, 0)
+        self.assertIn("Already up to date", out)
+        ask.assert_not_called()
+
+    def test_local_changes_are_listed_and_need_a_yes(self):
+        Path(fragment_files()[1]).write_text("# my uncommitted edit\n")
+        code, out, ask = self.pull(answer="y")
+        self.assertEqual(code, 0)
+        ask.assert_called_once()
+        self.assertIn(fragment_files()[1], out)
+        self.assertEqual(self.files()[1], "m;\n")
+
+    def test_declining_leaves_every_file_untouched(self):
+        Path(fragment_files()[1]).write_text("# my uncommitted edit\n")
+        code, out, _ = self.pull(answer="n")
+        self.assertEqual(code, 1)
+        self.assertIn("Not pulled", out)
+        self.assertEqual(self.files(), ["", "# my uncommitted edit\n", ""])
+
+    def test_no_answer_at_all_counts_as_no(self):
+        Path(fragment_files()[0]).write_text("# mine\n")
+        code, _, _ = self.pull(answer="EOF")
+        self.assertEqual((code, self.files()[0]), (1, "# mine\n"))
+
+    def test_yes_replaces_without_asking(self):
+        Path(fragment_files()[1]).write_text("# my uncommitted edit\n")
+        code, _, ask = self.pull("--yes")
+        self.assertEqual((code, self.files()[1]), (0, "m;\n"))
+        ask.assert_not_called()
+
+
+LIVE_RULE = 'if address :is "from" "live@x.y" {\n  fileinto "INBOX.live";\n  stop;\n}\n'
+
+
+class LiveTargetTest(Project):
+    """--live checks Fastmail's script exactly as it is; your rules play no part."""
+
+    middle = "if true {\n  stop;\n"
+
+    def save_live(self, middle=LIVE_RULE, name="live.sieve"):
+        Path(name).write_text(assemble(REMOTE, "", middle, ""))
+
+    def test_your_rules_are_not_checked_and_do_not_matter(self):
+        self.save_live()
+        code, out, _ = run("lint", "--live", "--offline", "--from-file", "live.sieve")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("your rules", out)
+
+    def test_the_default_still_checks_your_rules(self):
+        self.save_live()
+        code, out, _ = run("lint", "--offline")
+        self.assertEqual(code, 1)
+        self.assertIn("✗ Valid format and syntax in your rules", out)
+
+    def test_a_problem_in_the_live_script_is_reported(self):
+        self.save_live("if {\n")
+        code, out, _ = run("lint", "--live", "--offline", "--from-file", "live.sieve")
+        self.assertEqual(code, 1)
+        self.assertIn("✗ Valid syntax in the live script", out)
+
+    def test_live_folder_checks_name_the_live_script(self):
+        self.save_live('fileinto :mailboxid "GONE" "x";\n')
+        boxes = [{"id": "P1", "name": "home", "parentId": None, "role": None}]
+        with (
+            mock.patch(
+                "fastmail_sieve.steps.pick", return_value={"token": "t", "cookie": "c"}
+            ),
+            mock.patch("fastmail_sieve.steps.fetch_mailboxes", return_value=boxes),
+        ):
+            code, out, _ = run("lint", "--live", "--from-file", "live.sieve")
+        self.assertEqual(code, 1)
+        self.assertIn("✗ Valid folder stable ids", out)
+        self.assertIn("GONE does not exist", out)
+        self.assertIn("Fastmail's script", out)
+        self.assertNotIn("rules/", out)
+
+    def test_live_without_a_file_needs_fastmail_so_offline_is_refused(self):
+        code, _, err = run("lint", "--live", "--offline")
+        self.assertEqual(code, 1)
+        self.assertIn("--live needs Fastmail", err)
+
+    def test_live_cannot_fix_because_it_never_touches_your_files(self):
+        self.save_live()
+        code, _, err = run("lint", "--live", "--fix", "--from-file", "live.sieve")
+        self.assertEqual(code, 1)
+        self.assertIn("--fix", err)
+        self.assertEqual(Path(fragment_files()[1]).read_text(), self.middle)
+
+    def test_explain_live_shows_what_is_live_not_your_rules(self):
+        Path(fragment_files()[1]).write_text(FILE_A_RULE)
+        self.save_live()
+        code, out, _ = run(
+            "explain", "--live", "--from-file", "live.sieve", "--color", "never"
         )
+        self.assertEqual(code, 0)
+        self.assertIn("live@x.y", out)
+        self.assertNotIn("a@b.c", out)
+
+    def test_explain_without_live_shows_your_rules(self):
+        Path(fragment_files()[1]).write_text(FILE_A_RULE)
+        self.save_live()
+        _, out, _ = run("explain", "--from-file", "live.sieve", "--color", "never")
+        self.assertIn("a@b.c", out)
+        self.assertNotIn("live@x.y", out)
+
+    def test_explain_live_of_a_script_without_blocks_still_explains_its_rules(self):
+        Path("bare.sieve").write_text('require ["fileinto"];\nfileinto "INBOX.x";\n')
+        code, _, err = run(
+            "explain", "--live", "--from-file", "bare.sieve", "--color", "never"
+        )
+        self.assertEqual(code, 0, err)
 
 
 FORMAT_AND_SYNTAX = "Valid format and syntax in your rules"
@@ -239,6 +388,24 @@ class ExplainCommandTest(Project):
         self.assertEqual(code, 0)
         self.assertIn("a@b.c", out)
 
+    def test_a_broken_variables_file_names_the_file(self):
+        Path("variables.toml").write_text("this is = = not toml\n")
+        code, _, err = self.explain()
+        self.assertEqual(code, 1)
+        self.assertIn("variables.toml", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_a_missing_variables_file_says_how_to_create_it(self):
+        Path("variables.toml").unlink()
+        code, _, err = self.explain()
+        self.assertEqual(code, 1)
+        self.assertIn("fastmail-sieve init", err)
+
+    def test_a_mistyped_from_file_is_a_clear_failure(self):
+        code, _, err = run("diff", "--from-file", "nope.sieve")
+        self.assertEqual(code, 1)
+        self.assertIn("nope.sieve", err)
+
     def test_an_unknown_topic_is_a_usage_error(self):
         with self.assertRaises(SystemExit) as raised:
             self.explain("nope")
@@ -280,7 +447,8 @@ class PushCommandTest(unittest.TestCase):
                 "fastmail_sieve.commands.push.write_steps", return_value=[write]
             ),
             mock.patch(
-                "builtins.input", side_effect=[answer] if answer != "EOF" else EOFError
+                "builtins.input",
+                side_effect=[answer] if answer != "EOF" else EOFError(),
             ) as ask,
         ):
             code, out, err = run("push", *argv)
