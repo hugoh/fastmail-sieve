@@ -328,6 +328,18 @@ class SessionTest(unittest.TestCase):
             (self.script.require, "### blocked", "### rules"),
         )
 
+    def test_push_stops_when_fastmail_changed_since_the_diff(self):
+        session = self.fetched()
+        self.fresh = [remote_script(start="an edit made in Fastmail's editor\n")]
+        result = session.push()
+        self.assertRegex(result.errors[0], "changed while you were deciding")
+        self.set_blocks.assert_not_called()
+
+    def test_push_reads_again_right_before_it_writes(self):
+        session = self.fetched()
+        session.push()
+        self.assertEqual(self.get_script.call_count, 2)
+
     def test_push_with_nothing_to_change_writes_nothing(self):
         self.script = remote_script(start="new;\n")
         self.fresh = [self.script]

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from fastmail_sieve.commands._options import confirm
-from fastmail_sieve.fastmail.blocks import get_script, set_blocks
+from fastmail_sieve.fastmail.blocks import CHANGED, get_script, set_blocks
 from fastmail_sieve.fastmail.credentials import gather, pick
 from fastmail_sieve.project import scaffold
 
@@ -30,6 +30,11 @@ def add_parser(subparsers):
     parser.set_defaults(run=run)
 
 
+def _ensure_unchanged(credentials, script):
+    if not get_script(credentials).same_blocks(script):
+        raise RuntimeError(CHANGED)
+
+
 def _remote(args):
     credentials = pick(gather(), session_required=True)
     script = get_script(credentials)
@@ -45,6 +50,7 @@ def _remote(args):
     if not args.yes and not confirm("Add the managed blocks to Fastmail?"):
         print("✗ Not changed")
         return 1
+    _ensure_unchanged(credentials, script)
     set_blocks(credentials, script.with_markers())
     if not get_script(credentials).has_markers:
         raise RuntimeError("Fastmail still reports no managed blocks after the update")
@@ -65,6 +71,7 @@ def _convert_markers(args, credentials, script):
     if not args.yes and not confirm("Convert the markers on Fastmail?"):
         print("✗ Not changed")
         return 1
+    _ensure_unchanged(credentials, script)
     set_blocks(credentials, script.convert_markers())
     after = get_script(credentials)
     if after.uses_legacy_markers or after.fragments != script.fragments:

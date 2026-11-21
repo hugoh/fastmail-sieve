@@ -2,7 +2,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from fastmail_sieve.fastmail.blocks import get_script, set_blocks
+from fastmail_sieve.fastmail.blocks import CHANGED, get_script, set_blocks
 from fastmail_sieve.fastmail.credentials import gather, pick
 from fastmail_sieve.fastmail.mailboxes import check_ids, check_names, fetch_mailboxes
 from fastmail_sieve.sieve.format import format_errors, format_files
@@ -134,6 +134,8 @@ class Session:
         updated = script.with_fragments(*read_fragments())
         if updated.same_blocks(script):
             return Result(detail="no change; nothing to push")
+        if not get_script(self.credentials()).same_blocks(script):
+            return Result(errors=[CHANGED])
         set_blocks(self.credentials(), updated)
         return Result(detail="pushed the managed blocks")
 

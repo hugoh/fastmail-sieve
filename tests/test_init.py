@@ -103,7 +103,8 @@ class InitCommandTest(InTempDir):
                 ],
             ),
             mock.patch(
-                "fastmail_sieve.commands.init.get_script", side_effect=[script, MARKED]
+                "fastmail_sieve.commands.init.get_script",
+                side_effect=[script, script, MARKED],
             ),
             mock.patch("fastmail_sieve.commands.init.set_blocks"),
             mock.patch("builtins.input", side_effect=[answer]),
@@ -175,7 +176,8 @@ class InitConvertMarkersTest(InTempDir):
                 ],
             ),
             mock.patch(
-                "fastmail_sieve.commands.init.get_script", side_effect=[script, after]
+                "fastmail_sieve.commands.init.get_script",
+                side_effect=[script, script, after],
             ),
             mock.patch("fastmail_sieve.commands.init.set_blocks"),
             mock.patch("builtins.input", side_effect=[answer]),
@@ -240,6 +242,35 @@ class InitConvertMarkersTest(InTempDir):
         )
         code, output, _, _ = self.convert(after=changed)
         self.assertEqual(code, 1)
+
+    def test_it_stops_if_fastmail_changed_while_you_were_deciding(self):
+        changed = RemoteScript(
+            "R", old_block("EDITED;\n"), "B", old_block("b;\n"), "U", old_block("c;\n")
+        )
+        patches = [
+            mock.patch(
+                "fastmail_sieve.commands.init.gather",
+                return_value=[
+                    (
+                        "t",
+                        {
+                            "session": {"token": "t", "cookie": "c", "username": None},
+                            "api": None,
+                        },
+                    )
+                ],
+            ),
+            mock.patch(
+                "fastmail_sieve.commands.init.get_script", side_effect=[LEGACY, changed]
+            ),
+            mock.patch("fastmail_sieve.commands.init.set_blocks"),
+        ]
+        with contextlib.ExitStack() as stack:
+            _, _, set_blocks = [stack.enter_context(p) for p in patches]
+            code, output = run("init", "--remote", "--convert-markers", "--yes")
+        self.assertEqual(code, 1)
+        self.assertIn("changed while you were deciding", output)
+        set_blocks.assert_not_called()
 
     def test_it_needs_remote(self):
         out = run("init", "--convert-markers")

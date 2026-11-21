@@ -22,6 +22,12 @@ NO_BLOCKS = (
 )
 
 
+CHANGED = (
+    "Fastmail's managed blocks changed while you were deciding: "
+    "run the command again to see the new diff"
+)
+
+
 def _markers(block):
     """The (start, end) marker pair a block uses, new style first, or None."""
     for start, end in MARKER_PAIRS:
