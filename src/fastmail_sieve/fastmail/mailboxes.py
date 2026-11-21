@@ -6,8 +6,10 @@ from fastmail_sieve.ui.tables import strip_variation_selectors
 
 USING = ["urn:ietf:params:jmap:core", MAIL]
 REFERENCE = re.compile(
-    r':mailboxid\s+"([^"]+)"(?:\s+"([^"]*)")?|mailboxidexists\s+"([^"]+)"'
+    r':mailboxid\s+"([^"]+)"(?:\s+"([^"]*)")?'
+    r'|mailboxidexists\s+(\[[^\]]*\]|"[^"]+")'
 )
+QUOTED = re.compile(r'"([^"]+)"')
 
 
 def fetch_mailboxes(credentials, call=jmap):
@@ -39,7 +41,10 @@ def references(text):
     """Return (id, fallback name or None) for every mailbox id the script uses."""
     found = []
     for match in REFERENCE.finditer(text):
-        found.append((match.group(1) or match.group(3), match.group(2)))
+        if match.group(1):
+            found.append((match.group(1), match.group(2)))
+        else:
+            found.extend((ident, None) for ident in QUOTED.findall(match.group(3)))
     return found
 
 

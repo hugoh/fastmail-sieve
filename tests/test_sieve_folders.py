@@ -47,6 +47,16 @@ def all_problems(boxes, files):
     return check_ids(boxes, files)[1] + check_names(boxes, files)[1]
 
 
+class ListFormReferencesTest(unittest.TestCase):
+    def test_every_id_of_a_mailboxidexists_list_is_found(self):
+        text = 'if mailboxidexists ["A1", "B2","C3"] { keep; }'
+        self.assertEqual(references(text), [("A1", None), ("B2", None), ("C3", None)])
+
+    def test_a_single_id_and_the_list_form_can_mix(self):
+        text = 'mailboxidexists "A1";\nmailboxidexists ["B2"];\nfileinto :mailboxid "C3" "x";'
+        self.assertEqual([found for found, _ in references(text)], ["A1", "B2", "C3"])
+
+
 class CheckTest(unittest.TestCase):
     def problems(self, text):
         return all_problems(BOXES, {"rules/middle.sieve": text})
