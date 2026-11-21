@@ -13,7 +13,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  hk:
+    uses: hugoh/gh-workflows/.github/workflows/hk.yml@30ea88e8815001f26c86977d2ba60ddddebf42e0 # v1.40.23
+    permissions:
+      contents: read
+      packages: read
+      statuses: write
+
   release:
+    needs: hk
     uses: hugoh/gh-workflows/.github/workflows/release.yml@30ea88e8815001f26c86977d2ba60ddddebf42e0 # v1.40.23
     permissions:
       contents: write
