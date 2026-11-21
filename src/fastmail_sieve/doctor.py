@@ -81,7 +81,7 @@ class Doctor:
                 ]
             )
         self.remote = get_script(chosen, self.call)
-        return Result(detail=_count(len(self.remote.text), "byte"))
+        return Result(detail=_count(len(self.remote.text.encode("utf-8")), "byte"))
 
     def blocks(self):
         if not require(self.remote, "The script").has_markers:

@@ -149,6 +149,16 @@ class NetworkStepsTest(unittest.TestCase):
         self.assertIn((SESSION_TOKEN, "SieveBlocks/get"), call.seen)
         self.assertRegex(result.detail, r"\d+ bytes")
 
+    def test_the_size_counts_bytes_not_characters(self):
+        multibyte = {**JSON, "sieveRequire": "# \u2328 \U0001f6d2 r\u00e9sum\u00e9"}
+        call = fake_call(script=multibyte)
+        subject, _ = doctor(BOTH, call)
+        subject.credentials()
+        result = subject.script()
+        text = subject.remote.text
+        self.assertGreater(len(text.encode("utf-8")), len(text))
+        self.assertEqual(result.detail, f"{len(text.encode('utf-8'))} bytes")
+
     def test_an_api_token_alone_cannot_read_the_script(self):
         subject, _ = doctor(API_ONLY)
         subject.credentials()
