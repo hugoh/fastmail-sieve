@@ -340,6 +340,16 @@ class SessionTest(unittest.TestCase):
         self.fresh = [remote_script(start="new;\n")]
         self.assertEqual(session.verify().errors, [])
 
+    def test_verify_accepts_a_file_without_a_final_newline_after_a_push(self):
+        with mock.patch(
+            "fastmail_sieve.steps.read_fragments", return_value=("keep;", "", "")
+        ):
+            session = self.fetched()
+            self.assertEqual(session.push().errors, [])
+            [_, sent], _ = self.set_blocks.call_args
+            self.fresh = [sent]
+            self.assertEqual(session.verify().errors, [])
+
     def test_verify_fails_when_the_blocks_still_differ(self):
         session = self.fetched()
         self.fresh = [remote_script(start="old;\n")]

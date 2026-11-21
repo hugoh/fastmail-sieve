@@ -138,7 +138,7 @@ class Session:
         return Result(detail="pushed the managed blocks")
 
     def verify(self):
-        if get_script(self.credentials()).fragments != read_fragments():
+        if not get_script(self.credentials()).matches(read_fragments()):
             return Result(
                 errors=["Fastmail's managed blocks differ from the local fragments"]
             )
