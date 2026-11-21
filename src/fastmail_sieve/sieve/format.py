@@ -4,6 +4,7 @@ from pathlib import Path
 INDENT = "  "
 OPENERS = "{(["
 CLOSERS = "})]"
+INLINE_COMMENT = re.compile(r"/\*.*?\*/")
 TEXT_BLOCK_START = re.compile(r"\btext:\s*$")
 MAILBOX_NAME = re.compile(r'(:mailboxid\s+"[^"]*"\s+")([^"]*)(")')
 FOLDER_SEPARATOR = "."
@@ -53,7 +54,7 @@ def _code(line):
             break
         else:
             out.append(char)
-    return "".join(out)
+    return INLINE_COMMENT.sub(lambda m: " " * len(m[0]), "".join(out))
 
 
 def _leading_closers(code):

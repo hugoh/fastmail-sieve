@@ -62,6 +62,24 @@ class IndentTest(unittest.TestCase):
         )
 
 
+class InlineBlockCommentTest(unittest.TestCase):
+    def test_braces_inside_an_inline_block_comment_are_not_counted(self):
+        text = "if true { /* { */\n  keep;\n}\nstop;"
+        self.assertEqual(format_sieve(text), text)
+
+    def test_a_closing_brace_in_an_inline_comment_does_not_close_the_block(self):
+        text = "if true { /* } */\n  keep;\n}"
+        self.assertEqual(format_sieve(text), text)
+
+    def test_code_after_an_inline_comment_still_counts(self):
+        text = "/* note */ if true {\n  keep;\n}"
+        self.assertEqual(format_sieve(text), text)
+
+    def test_a_block_comment_marker_inside_a_string_is_text(self):
+        text = 'if header :contains "x" "/* {" {\n  keep;\n}'
+        self.assertEqual(format_sieve(text), text)
+
+
 class FolderNameTest(unittest.TestCase):
     def name(self, written):
         text = f'fileinto :mailboxid "P" "{written}";\n'
