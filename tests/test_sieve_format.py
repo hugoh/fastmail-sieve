@@ -184,7 +184,7 @@ class FormatErrorsTest(unittest.TestCase):
             {"rules/a.sieve": "if true {\nstop;\n}\n", "rules/b.sieve": "stop;\n"}
         )
         self.assertEqual(
-            errors, ["rules/a.sieve is not formatted: run `fastmail-sieve format`"]
+            errors, ["rules/a.sieve is not formatted: run `fastmail-sieve lint --fix`"]
         )
 
     def test_formatted_files_have_no_errors(self):

@@ -8,11 +8,13 @@ it uses an undocumented Fastmail API that can change without notice (see
 - **Edit rules as files** in three fragments (`rules/top.sieve`,
   `rules/middle.sieve`, `rules/bottom.sieve`), review them in git, and push
   them to Fastmail.
-- **`lint`** checks format, syntax (including Fastmail's own Sieve
-  extensions such as `jmapquery` and `mailboxid`) and that every folder id in
-  your rules still exists, with the right name.
+- **`lint`** is the one check: format, syntax (including Fastmail's own Sieve
+  extensions such as `jmapquery` and `mailboxid`), variables, and that every
+  folder id in your rules still exists with the right name. It ends with
+  warnings (overlaps, duplicates, disabled rules). `lint --fix` reformats your
+  rules.
 - **`explain`** shows your rules and your Fastmail UI rules in plain language,
-  and **`warnings`** finds overlaps, duplicates and disabled rules.
+  the whole script, or its variables.
 - **`migrate`** turns your Fastmail UI rules into custom Sieve rules.
 - **`push`** shows the diff and asks before it changes anything.
 
@@ -64,7 +66,7 @@ fastmail-sieve auth              # store your token and cookie (see Credentials)
 fastmail-sieve init --remote     # once: add the managed blocks to Fastmail
 fastmail-sieve pull              # bring Fastmail's current blocks into rules/
 $EDITOR rules/middle.sieve
-fastmail-sieve lint              # check everything
+fastmail-sieve lint --fix        # reformat, then check everything
 fastmail-sieve diff              # what a push would change
 fastmail-sieve push              # shows the diff, asks, pushes, verifies
 ```
@@ -80,16 +82,13 @@ fastmail-sieve push              # shows the diff, asks, pushes, verifies
 | `push` | Check everything, show the diff, ask, push the managed blocks, then verify with a fresh pull. `--yes` skips the question |
 | `diff` | Show what a push would change (`+` added, `-` removed) |
 | `assemble` | Print the full script (Fastmail's parts plus your fragments); `--output FILE` writes it |
-| `lint` | A checklist that stops at the first failure: format and syntax of your rules, then (online) the assembled script, markers, folder stable ids and folder names. `--offline` runs only the first check and needs no credentials |
-| `format` | Re-indent fragments by brace depth and normalise `:mailboxid` folder names; `--check` only reports |
-| `explain` | Summary table, then your rules and your UI rules as tables; `--full` shows the whole script in execution order |
-| `warnings` | One line per warning: overlaps, duplicate or conflicting UI rules, disabled UI rules, stale variable descriptions; `--strict` exits 1 if there are any |
-| `variables` | Table of the script's variables; fails if one is undefined, unused or undocumented in `variables.toml` |
+| `lint` | The one check, as a checklist that stops at the first failure: format and syntax of your rules, then the assembled script (syntax, markers, variables), the folder stable ids and names, and finally the warnings (overlaps, duplicate or conflicting UI rules, disabled UI rules, stale variable descriptions), which are shown but do not fail. `--fix` reformats your rules first (indentation and `:mailboxid` folder names); `--strict` makes warnings fail; `--offline` skips everything that needs Fastmail; `--from-file FILE` checks a saved script |
+| `explain [TOPIC]` | `rules` (the default): a summary table, then your rules and your UI rules as tables. `script`: the whole script in execution order. `variables`: the script's variables and where they are set and read |
 | `migrate` | Print custom rules equivalent to your enabled Fastmail UI rules |
 | `folders` | List Fastmail folders and their ids (`folders tax` filters by path) |
 
-Commands that need the script (`assemble`, `diff`, `explain`, `migrate`,
-`variables`, `warnings`) fetch it themselves; pass `--from-file FILE` to use a
+Commands that need the script (`assemble`, `diff`, `explain`, `lint`,
+`migrate`) fetch it themselves; pass `--from-file FILE` to use a
 saved copy with no network. `fastmail-sieve COMMAND --help` lists the options.
 
 ## Credentials
@@ -197,8 +196,8 @@ turns it off, and `--width N` sets the table width.
 | ❗ | Duplicate UI rule, or your rule overlaps a UI rule |
 
 In conditions the wording is dim and the values being matched (addresses,
-domains, subjects) are shown at normal brightness; with `--full`, Fastmail's
-own rules are dim throughout. Variable wording comes from `variables.toml`.
+domains, subjects) are shown at normal brightness; with `explain script`,
+Fastmail's own rules are dim throughout. Variable wording comes from `variables.toml`.
 
 ## Folder ids and names
 
@@ -206,7 +205,7 @@ Rules file mail with `fileinto :mailboxid "ID" "name"`. The id is what Fastmail
 uses and it survives a folder rename; the name is only a hint, but it has to
 be right for `lint` to pass. In Sieve the name is the folder's path with `.`
 separators and an `INBOX.` prefix: `INBOX.finance.taxes`, and
-`INBOX.Inbox.Shopping` for a folder inside the Inbox. `fastmail-sieve format`
+`INBOX.Inbox.Shopping` for a folder inside the Inbox. `fastmail-sieve lint --fix`
 writes them that way, and `lint` compares them with the live folders. Look ids
 up with `fastmail-sieve folders`.
 
@@ -217,10 +216,10 @@ up with `fastmail-sieve folders`.
    skipping the Inbox, pinning and stopping. Anything else is an error
    naming the rule and the reason.
 2. Paste the rules into a block of `rules/middle.sieve`, then run
-   `fastmail-sieve format`.
+   `fastmail-sieve lint --fix`.
 3. `fastmail-sieve diff`, then `fastmail-sieve push`.
 4. Disable or delete the UI rule in Fastmail. Until you do, `explain` and
-   `warnings` flag the overlap.
+   `lint` flag the overlap.
 
 A search that isn't a plain `from` address becomes a `jmapquery` rule that
 reuses the UI rule's exact search, so it matches what the UI rule matches. This
@@ -236,7 +235,7 @@ Fastmail's Sieve tester.
 
 ## Using it in CI or a pre-commit hook
 
-`fastmail-sieve lint --offline` and `fastmail-sieve format --check` need no
+`fastmail-sieve lint --offline` (add `--fix` for a pre-commit hook) needs no
 credentials and no network. Everything else talks to Fastmail with a full web
 session, so keep it out of CI (see [Credentials](#credentials)).
 

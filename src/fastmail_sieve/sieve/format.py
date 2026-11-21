@@ -100,7 +100,7 @@ def format_sieve(text):
 
 def format_errors(files):
     return [
-        f"{name} is not formatted: run `fastmail-sieve format`"
+        f"{name} is not formatted: run `fastmail-sieve lint --fix`"
         for name, text in files.items()
         if format_sieve(text) != text
     ]

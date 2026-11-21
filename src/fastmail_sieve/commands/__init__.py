@@ -5,29 +5,18 @@ from fastmail_sieve.commands import (
     doctor,
     explain,
     folders,
-    format,
     init,
     lint,
     migrate,
     pull,
     push,
-    variables,
-    warnings,
 )
 
-ALL = (
-    init,
-    auth,
-    pull,
-    push,
-    diff,
-    assemble,
-    lint,
-    doctor,
-    format,
-    explain,
-    warnings,
-    variables,
-    migrate,
-    folders,
+GROUPS = (
+    ("Set up", (init, auth, doctor)),
+    ("Sync with Fastmail", (pull, diff, push)),
+    ("Check", (lint,)),
+    ("Understand", (explain,)),
+    ("Tools", (migrate, folders, assemble)),
 )
+ALL = tuple(command for _, commands in GROUPS for command in commands)

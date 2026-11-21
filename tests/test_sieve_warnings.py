@@ -1,11 +1,8 @@
-import io
 import unittest
-
-from rich.console import Console
 
 from fastmail_sieve.sieve.lint import FASTMAIL_REQUIRE
 from fastmail_sieve.sieve.report import build_rules
-from fastmail_sieve.sieve.warnings import collect_warnings, run
+from fastmail_sieve.sieve.warnings import collect_warnings
 
 DOCS = {
     "stop": {"when_no": "no earlier rule has handled the message"},
@@ -93,29 +90,6 @@ class CollectTest(unittest.TestCase):
         self.assertEqual(
             lines({"rules/middle.sieve": FINANCE}, ui_rule("x@y.z", LABEL)), []
         )
-
-
-class RunTest(unittest.TestCase):
-    def go(self, warnings, strict=False):
-        buffer = io.StringIO()
-        console = Console(file=buffer, force_terminal=False, width=100, emoji=False)
-        code = run(warnings, strict, console)
-        return code, buffer.getvalue()
-
-    def test_prints_one_line_per_warning_and_a_count(self):
-        code, text = self.go([("overlap", "a"), ("disabled", "b")])
-        self.assertEqual(code, 0)
-        self.assertEqual(text.splitlines(), ["overlap: a", "disabled: b", "2 warnings"])
-
-    def test_singular_count(self):
-        self.assertEqual(self.go([("overlap", "a")])[1].splitlines()[-1], "1 warning")
-
-    def test_no_warnings(self):
-        self.assertEqual(self.go([]), (0, "No warnings.\n"))
-
-    def test_strict_fails_when_there_are_warnings(self):
-        self.assertEqual(self.go([("overlap", "a")], strict=True)[0], 1)
-        self.assertEqual(self.go([], strict=True)[0], 0)
 
 
 if __name__ == "__main__":

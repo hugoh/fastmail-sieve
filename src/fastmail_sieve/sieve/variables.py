@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from rich import box
 from rich.table import Table
@@ -187,7 +188,18 @@ def render(report, width=DEFAULT_WIDTH, color=False):
     return "\n".join(render_table(table, width, color))
 
 
+def load_variable_docs():
+    path = descriptions_file()
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError as error:
+        raise RuntimeError(
+            f"{path} not found: create it with `fastmail-sieve init`"
+        ) from error
+    return load_descriptions(text)
+
+
 def load_report(script_text):
-    with open(descriptions_file(), encoding="utf-8") as handle:
-        descriptions = load_descriptions(handle.read())
-    return analyze(script_text, descriptions, fragment_variable_names(read_fragments()))
+    return analyze(
+        script_text, load_variable_docs(), fragment_variable_names(read_fragments())
+    )

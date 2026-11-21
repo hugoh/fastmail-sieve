@@ -43,31 +43,29 @@ class Project(unittest.TestCase):
         Path("remote.sieve").write_text(REMOTE)
 
 
-class FormatCommandTest(Project):
-    def test_rewrites_files_in_place(self):
-        Path("x.sieve").write_text("if true {\nstop;\n}\n")
-        code, _, err = run("format", "x.sieve")
-        self.assertEqual(code, 0)
-        self.assertEqual(Path("x.sieve").read_text(), "if true {\n  stop;\n}\n")
-        self.assertIn("x.sieve: formatted", err)
+class LintFixTest(Project):
+    middle = "if true {\nstop;\n}\n"
 
-    def test_check_fails_without_changing_the_file(self):
-        Path("x.sieve").write_text("if true {\nstop;\n}\n")
-        code, _, err = run("format", "--check", "x.sieve")
+    def test_lint_reports_unformatted_rules_without_changing_them(self):
+        code, out, _ = run("lint", "--offline")
         self.assertEqual(code, 1)
-        self.assertEqual(Path("x.sieve").read_text(), "if true {\nstop;\n}\n")
-        self.assertIn("x.sieve: needs formatting", err)
+        self.assertIn("lint --fix", out)
+        self.assertEqual(Path(fragment_files()[1]).read_text(), self.middle)
 
-    def test_formatted_files_pass_the_check(self):
-        Path("x.sieve").write_text("if true {\n  stop;\n}\n")
-        self.assertEqual(run("format", "--check", "x.sieve")[0], 0)
-
-    def test_without_files_it_formats_the_fragments(self):
-        Path(fragment_files()[1]).write_text("if true {\nstop;\n}\n")
-        self.assertEqual(run("format")[0], 0)
+    def test_fix_rewrites_the_fragments_and_then_checks_them(self):
+        code, out, _ = run("lint", "--offline", "--fix")
+        self.assertEqual(code, 0)
         self.assertEqual(
             Path(fragment_files()[1]).read_text(), "if true {\n  stop;\n}\n"
         )
+        self.assertIn("Format your rules", out)
+        self.assertIn(fragment_files()[1], out)
+
+    def test_fix_on_formatted_rules_says_so_and_changes_nothing(self):
+        run("lint", "--offline", "--fix")
+        code, out, _ = run("lint", "--offline", "--fix")
+        self.assertEqual(code, 0)
+        self.assertIn("already formatted", out)
 
 
 class AssembleCommandTest(Project):
@@ -118,6 +116,16 @@ class PullCommandTest(Project):
         )
 
 
+FORMAT_AND_SYNTAX = "Valid format and syntax in your rules"
+FROM_FILE = ["Read the saved script", "Assemble the full script"]
+SCRIPT_CHECKS = [
+    "Valid syntax in the assembled script",
+    "Valid markers in the assembled script",
+    "Valid variables",
+]
+FOLDER_CHECKS = ["Valid folder stable ids", "Valid folder names"]
+
+
 class LintCommandTest(Project):
     def steps_for(self, *argv):
         with mock.patch(
@@ -127,54 +135,133 @@ class LintCommandTest(Project):
         return [step.name for step in run_steps.call_args.args[0]]
 
     def test_offline_runs_only_the_checks_that_need_no_fastmail(self):
+        self.assertEqual(self.steps_for("--offline"), [FORMAT_AND_SYNTAX])
+
+    def test_fix_adds_a_formatting_step_first(self):
         self.assertEqual(
-            self.steps_for("--offline"), ["Valid format and syntax in your rules"]
+            self.steps_for("--offline", "--fix"),
+            ["Format your rules", FORMAT_AND_SYNTAX],
         )
 
-    def test_online_runs_the_whole_checklist(self):
+    def test_online_runs_every_check_and_ends_with_the_warnings(self):
         names = self.steps_for()
-        self.assertEqual(names[0], "Valid format and syntax in your rules")
-        self.assertIn("Valid folder stable ids", names)
+        self.assertEqual(names[0], FORMAT_AND_SYNTAX)
+        self.assertEqual(names[1], "Fetch Fastmail's generated script")
+        for check in (*SCRIPT_CHECKS, *FOLDER_CHECKS):
+            self.assertIn(check, names)
+        self.assertEqual(names[-1], "Warnings")
+
+    def test_from_file_reads_the_saved_script_but_still_checks_folders(self):
+        names = self.steps_for("--from-file", "remote.sieve")
+        self.assertNotIn("Fetch Fastmail's generated script", names)
+        self.assertEqual(names[1:3], FROM_FILE)
+        for check in FOLDER_CHECKS:
+            self.assertIn(check, names)
+
+    def test_offline_from_file_checks_the_script_without_any_fastmail_access(self):
+        self.assertEqual(
+            self.steps_for("--offline", "--from-file", "remote.sieve"),
+            [FORMAT_AND_SYNTAX, *FROM_FILE, *SCRIPT_CHECKS, "Warnings"],
+        )
 
 
-class ExplainWarningsVariablesTest(Project):
+class LintOfflineFromFileTest(Project):
     middle = FILE_A_RULE
 
-    def test_explain_shows_the_rules(self):
-        code, out, _ = run(
-            "explain",
-            "--from-file",
-            "remote.sieve",
-            "--color",
-            "never",
-            "--width",
-            "100",
-        )
+    def lint(self, *extra):
+        return run("lint", "--offline", "--from-file", "remote.sieve", *extra)
+
+    def test_every_check_passes_on_a_clean_project(self):
+        code, out, _ = self.lint()
+        self.assertEqual(code, 0)
+        for name in (FORMAT_AND_SYNTAX, *SCRIPT_CHECKS, "Warnings"):
+            self.assertIn(f"✓ {name}", out)
+        self.assertNotIn("folder", out)
+
+    def test_warnings_are_shown_but_do_not_fail_by_default(self):
+        with mock.patch(
+            "fastmail_sieve.steps.collect_warnings", return_value=[("overlap", "x")]
+        ):
+            code, out, _ = self.lint()
+        self.assertEqual(code, 0)
+        self.assertIn("! Warnings", out)
+        self.assertIn("overlap: x", out)
+
+    def test_strict_turns_warnings_into_a_failure(self):
+        with mock.patch(
+            "fastmail_sieve.steps.collect_warnings", return_value=[("overlap", "x")]
+        ):
+            code, out, _ = self.lint("--strict")
+        self.assertEqual(code, 1)
+        self.assertIn("✗ Warnings", out)
+        self.assertIn("overlap: x", out)
+
+    def test_strict_is_fine_when_there_is_nothing_to_warn_about(self):
+        self.assertEqual(self.lint("--strict")[0], 0)
+
+
+class LintVariablesTest(Project):
+    middle = 'set "stop" "Y";\nif string :is "${stop}" "Y" { stop; }\n'
+    variables = '[stop]\ndescription = "Stop every later rule."\n'
+
+    def test_documented_variables_pass(self):
+        code, out, _ = run("lint", "--offline", "--from-file", "remote.sieve")
+        self.assertEqual(code, 0)
+        self.assertIn("✓ Valid variables", out)
+
+    def test_an_undocumented_variable_fails_the_lint(self):
+        Path("variables.toml").write_text("")
+        code, out, _ = run("lint", "--offline", "--from-file", "remote.sieve")
+        self.assertEqual(code, 1)
+        self.assertIn("✗ Valid variables", out)
+        self.assertIn("no description", out)
+
+    def test_a_missing_variables_file_says_how_to_create_it(self):
+        Path("variables.toml").unlink()
+        code, out, _ = run("lint", "--offline", "--from-file", "remote.sieve")
+        self.assertEqual(code, 1)
+        self.assertIn("fastmail-sieve init", out)
+
+
+class ExplainCommandTest(Project):
+    middle = FILE_A_RULE
+
+    def explain(self, *args):
+        return run("explain", *args, "--from-file", "remote.sieve", "--color", "never")
+
+    def test_rules_are_the_default_topic(self):
+        code, out, _ = self.explain("--width", "100")
         self.assertEqual(code, 0)
         self.assertIn("a@b.c", out)
 
-    def test_warnings_with_nothing_to_warn_about(self):
-        code, out, _ = run("warnings", "--from-file", "remote.sieve", "--strict")
-        self.assertEqual((code, out.strip()), (0, "No warnings."))
+    def test_the_script_topic_shows_the_whole_script(self):
+        code, out, _ = self.explain("script", "--width", "100")
+        self.assertEqual(code, 0)
+        self.assertIn("a@b.c", out)
+
+    def test_an_unknown_topic_is_a_usage_error(self):
+        with self.assertRaises(SystemExit) as raised:
+            self.explain("nope")
+        self.assertEqual(raised.exception.code, 2)
 
 
-class VariablesCommandTest(Project):
+class ExplainVariablesTest(Project):
     middle = 'set "stop" "Y";\nif string :is "${stop}" "Y" { stop; }\n'
     variables = '[stop]\ndescription = "Stop every later rule."\n'
 
     def test_describes_the_variables(self):
         code, out, _ = run(
-            "variables", "--from-file", "remote.sieve", "--color", "never"
+            "explain", "variables", "--from-file", "remote.sieve", "--color", "never"
         )
         self.assertEqual(code, 0)
         self.assertIn("Stop every later rule.", out)
 
-    def test_an_undocumented_variable_fails(self):
+    def test_problems_are_shown_but_explain_is_a_report_and_does_not_fail(self):
         Path("variables.toml").write_text("")
         code, _, err = run(
-            "variables", "--from-file", "remote.sieve", "--color", "never"
+            "explain", "variables", "--from-file", "remote.sieve", "--color", "never"
         )
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 0)
         self.assertIn("error:", err)
 
 
@@ -187,8 +274,8 @@ class PushCommandTest(unittest.TestCase):
         with (
             mock.patch("fastmail_sieve.commands.push.Session", return_value=session),
             mock.patch(
-                "fastmail_sieve.commands.push.check_steps", return_value=[check]
-            ),
+                "fastmail_sieve.commands.push.lint_steps", return_value=[check]
+            ) as lint,
             mock.patch(
                 "fastmail_sieve.commands.push.write_steps", return_value=[write]
             ),
@@ -197,6 +284,7 @@ class PushCommandTest(unittest.TestCase):
             ) as ask,
         ):
             code, out, err = run("push", *argv)
+        self.lint_steps = lint
         return code, out + err, written, ask
 
     def test_shows_the_diff_asks_and_pushes_on_yes(self):
@@ -224,6 +312,14 @@ class PushCommandTest(unittest.TestCase):
         self.assertEqual((code, written), (0, []))
         self.assertIn("Nothing to push", output)
         ask.assert_not_called()
+
+    def test_strict_makes_warnings_block_the_push(self):
+        self.push("--strict")
+        self.assertTrue(self.lint_steps.call_args.kwargs["strict"])
+
+    def test_without_strict_warnings_do_not_block(self):
+        self.push()
+        self.assertFalse(self.lint_steps.call_args.kwargs["strict"])
 
     def test_a_failed_check_stops_before_the_diff(self):
         code, output, written, ask = self.push(checks=1)

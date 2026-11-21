@@ -12,14 +12,11 @@ COMMANDS = {
     "doctor",
     "explain",
     "folders",
-    "format",
     "init",
     "lint",
     "migrate",
     "pull",
     "push",
-    "variables",
-    "warnings",
 }
 
 
@@ -34,43 +31,43 @@ class ParserTest(unittest.TestCase):
         )
         self.assertEqual(set(subparsers.choices), COMMANDS)
 
-    def test_lint_is_online_unless_offline_is_asked_for(self):
-        self.assertFalse(parse("lint").offline)
-        self.assertTrue(parse("lint", "--offline").offline)
+    def test_lint_options(self):
+        plain = parse("lint")
+        self.assertEqual(
+            (plain.offline, plain.fix, plain.strict), (False, False, False)
+        )
+        args = parse("lint", "--offline", "--fix", "--strict", "--from-file", "f")
+        self.assertEqual(
+            (args.offline, args.fix, args.strict, args.from_file),
+            (True, True, True, "f"),
+        )
 
     def test_push_asks_unless_told_not_to(self):
         self.assertFalse(parse("push").yes)
         self.assertTrue(parse("push", "--yes").yes)
 
-    def test_format_takes_files_and_check(self):
-        args = parse("format", "--check", "a.sieve", "b.sieve")
-        self.assertTrue(args.check)
-        self.assertEqual(args.files, ["a.sieve", "b.sieve"])
-        self.assertEqual(parse("format").files, [])
-
-    def test_explain_options(self):
-        args = parse("explain", "--full", "--width", "90", "--color", "never")
-        self.assertEqual((args.full, args.width, args.color), (True, 90, "never"))
-        self.assertEqual(
-            (parse("explain").full, parse("explain").color), (False, "auto")
-        )
+    def test_explain_takes_a_topic_and_display_options(self):
+        args = parse("explain", "script", "--width", "90", "--color", "never")
+        self.assertEqual((args.topic, args.width, args.color), ("script", 90, "never"))
+        self.assertEqual(parse("explain").topic, "rules")
+        self.assertEqual(parse("explain", "variables").topic, "variables")
 
     def test_commands_that_read_the_script_accept_from_file(self):
         for command in (
             "assemble",
             "diff",
             "explain",
+            "lint",
             "migrate",
-            "variables",
-            "warnings",
         ):
             self.assertEqual(
                 parse(command, "--from-file", "x.sieve").from_file, "x.sieve", command
             )
             self.assertIsNone(parse(command).from_file, command)
 
-    def test_warnings_strict_and_folders_filter(self):
-        self.assertTrue(parse("warnings", "--strict").strict)
+    def test_push_strict_and_folders_filter(self):
+        self.assertTrue(parse("push", "--strict").strict)
+        self.assertFalse(parse("push").strict)
         self.assertEqual(parse("folders", "tax").filter, "tax")
         self.assertIsNone(parse("folders").filter)
 
@@ -111,6 +108,21 @@ class MainTest(unittest.TestCase):
 
         with mock.patch("fastmail_sieve.cli.version", side_effect=PackageNotFoundError):
             self.assertEqual(package_version(), "unknown")
+
+    def test_help_groups_the_commands_by_what_they_are_for(self):
+        code, out, _ = self.run_main("--help")
+        self.assertEqual(code, 0)
+        groups = ["Set up", "Sync with Fastmail", "Check", "Understand", "Tools"]
+        positions = [out.index(group) for group in groups]
+        self.assertEqual(positions, sorted(positions))
+        for command in COMMANDS:
+            self.assertEqual(out.count(f"\n  {command} "), 1, command)
+
+    def test_a_command_still_has_its_own_help(self):
+        code, out, _ = self.run_main("lint", "--help")
+        self.assertEqual(code, 0)
+        self.assertIn("--fix", out)
+        self.assertIn("--strict", out)
 
     def test_no_command_prints_help_and_fails(self):
         code, _, err = self.run_main()

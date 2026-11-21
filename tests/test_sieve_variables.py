@@ -185,5 +185,24 @@ class LoadDescriptionsTest(unittest.TestCase):
         self.assertIn("abc", load_descriptions('[ABC]\ndescription = "d"\n'))
 
 
+class VariableDocsFileTest(unittest.TestCase):
+    def test_a_missing_file_says_how_to_create_it(self):
+        import os
+        import tempfile
+
+        from fastmail_sieve.sieve.variables import load_variable_docs
+
+        with tempfile.TemporaryDirectory() as directory:
+            previous = os.getcwd()
+            os.chdir(directory)
+            try:
+                with self.assertRaisesRegex(
+                    RuntimeError, r"variables\.toml.*fastmail-sieve init"
+                ):
+                    load_variable_docs()
+            finally:
+                os.chdir(previous)
+
+
 if __name__ == "__main__":
     unittest.main()

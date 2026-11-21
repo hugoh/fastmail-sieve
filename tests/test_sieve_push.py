@@ -1,5 +1,7 @@
 import io
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from rich.console import Console
@@ -93,7 +95,7 @@ class LintFragmentsTest(unittest.TestCase):
         result = self.lint(top="if true {\nstop;\n}\n")
         self.assertEqual(
             result.errors,
-            ["rules/top.sieve is not formatted: run `fastmail-sieve format`"],
+            ["rules/top.sieve is not formatted: run `fastmail-sieve lint --fix`"],
         )
 
     def test_formatted_valid_fragments_pass(self):
@@ -150,21 +152,59 @@ LINT_NAMES = [
     "Assemble the full script",
     "Valid syntax in the assembled script",
     "Valid markers in the assembled script",
+    "Valid variables",
     "Valid folder stable ids",
     "Valid folder names",
+    "Warnings",
 ]
 
 
+def names(steps):
+    return [step.name for step in steps]
+
+
 class StepListTest(unittest.TestCase):
-    def test_lint_is_a_checklist_of_valid_things(self):
-        self.assertEqual([step.name for step in lint_steps()], LINT_NAMES)
+    def test_lint_is_the_whole_checklist_ending_with_the_warnings(self):
+        self.assertEqual(names(lint_steps()), LINT_NAMES)
 
     def test_push_runs_every_lint_step_first_then_pushes(self):
-        names = [step.name for step in build_steps()]
-        self.assertEqual(names[: len(LINT_NAMES)], LINT_NAMES)
         self.assertEqual(
-            names[len(LINT_NAMES) :],
-            ["Valid variables", "Push the managed blocks", "Verify with a fresh pull"],
+            names(build_steps()),
+            [*LINT_NAMES, "Push the managed blocks", "Verify with a fresh pull"],
+        )
+
+    def test_offline_is_only_the_format_and_syntax_check(self):
+        self.assertEqual(names(lint_steps(offline=True)), LINT_NAMES[:1])
+
+    def test_fix_formats_first_and_composes_with_offline(self):
+        self.assertEqual(
+            names(lint_steps(offline=True, fix=True)),
+            ["Format your rules", LINT_NAMES[0]],
+        )
+        self.assertEqual(
+            names(lint_steps(fix=True))[:2], ["Format your rules", LINT_NAMES[0]]
+        )
+
+    def test_from_file_replaces_the_fetch(self):
+        steps = names(lint_steps(from_file="saved.sieve"))
+        self.assertEqual(steps[1], "Read the saved script")
+        self.assertNotIn("Fetch Fastmail's generated script", steps)
+        self.assertIn("Valid folder names", steps)
+
+    def test_offline_from_file_drops_only_the_folder_checks(self):
+        expected = [n for n in LINT_NAMES if "folder" not in n and "Fetch" not in n]
+        expected.insert(1, "Read the saved script")
+        self.assertEqual(names(lint_steps(offline=True, from_file="f")), expected)
+
+
+class WarningsDisplayTest(unittest.TestCase):
+    def test_warnings_are_shown_with_a_mark_and_do_not_fail(self):
+        c = console()
+        step = Step("Warnings", lambda: Result(warnings=["overlap: a", "disabled: b"]))
+        self.assertEqual(run_steps([step, Step("After", lambda: Result())], c), 0)
+        self.assertEqual(
+            output(c).splitlines(),
+            ["! Warnings", "    overlap: a", "    disabled: b", "✓ After"],
         )
 
 
@@ -234,6 +274,48 @@ class SessionTest(unittest.TestCase):
             self.assertEqual(session.check_markers().errors, [])
         syntax.assert_called_once_with(session.assembled)
         markers.assert_called_once_with(session.assembled)
+
+    def test_read_file_uses_a_saved_script_and_never_asks_fastmail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "saved.sieve"
+            path.write_text("saved script\n")
+            session = Session()
+            self.assertEqual(session.read_file(str(path)).errors, [])
+        self.assertEqual(session.remote, "saved script\n")
+        self.get_script.assert_not_called()
+
+    def warnings_for(self, found, strict):
+        session = self.fetched()
+        session.assemble()
+        with (
+            mock.patch("fastmail_sieve.steps.build_rules"),
+            mock.patch("fastmail_sieve.steps.disabled_ui_rules"),
+            mock.patch("fastmail_sieve.steps.load_variable_docs", return_value={}),
+            mock.patch(
+                "fastmail_sieve.steps.load_report",
+                return_value=mock.Mock(warnings=["stale: x"]),
+            ),
+            mock.patch(
+                "fastmail_sieve.steps.collect_warnings", return_value=found
+            ) as c,
+        ):
+            result = session.warnings(strict)
+        return result, c
+
+    def test_warnings_are_listed_and_include_the_variable_warnings(self):
+        result, collect = self.warnings_for([("overlap", "a")], strict=False)
+        self.assertEqual((result.errors, result.warnings), ([], ["overlap: a"]))
+        self.assertEqual(collect.call_args.args[2], ["stale: x"])
+
+    def test_no_warnings_is_reported_as_none(self):
+        result, _ = self.warnings_for([], strict=False)
+        self.assertEqual(
+            (result.errors, result.warnings, result.detail), ([], [], "none")
+        )
+
+    def test_strict_turns_the_warnings_into_errors(self):
+        result, _ = self.warnings_for([("overlap", "a")], strict=True)
+        self.assertEqual((result.errors, result.warnings), (["overlap: a"], []))
 
     def test_push_writes_the_changed_blocks(self):
         session = self.fetched()

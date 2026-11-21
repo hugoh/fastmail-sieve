@@ -2,7 +2,7 @@ from rich.console import Console
 
 from fastmail_sieve.commands._options import confirm
 from fastmail_sieve.commands.diff import unified
-from fastmail_sieve.steps import Session, check_steps, run_steps, write_steps
+from fastmail_sieve.steps import Session, lint_steps, run_steps, write_steps
 
 
 def add_parser(subparsers):
@@ -12,6 +12,9 @@ def add_parser(subparsers):
     )
     parser.add_argument(
         "--yes", action="store_true", help="push without asking for confirmation"
+    )
+    parser.add_argument(
+        "--strict", action="store_true", help="do not push while there are warnings"
     )
     parser.set_defaults(run=run)
 
@@ -31,7 +34,7 @@ def _show(lines, console):
 def run(args):
     console = Console(highlight=False)
     session = Session()
-    code = run_steps(check_steps(session), console)
+    code = run_steps(lint_steps(session, strict=args.strict), console)
     if code:
         return code
     changes = unified(session.remote, session.assembled)

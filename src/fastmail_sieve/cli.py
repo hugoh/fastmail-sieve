@@ -16,10 +16,38 @@ def package_version():
         return "unknown"
 
 
+class CommandRegistry:
+    """Registers each command but keeps it out of argparse's flat list, remembering
+    its summary so the help can show the commands grouped by purpose."""
+
+    def __init__(self, subparsers):
+        self._subparsers = subparsers
+        self.summaries = {}
+
+    def add_parser(self, name, help=None, **kwargs):
+        self.summaries[name] = help
+        kwargs.setdefault("description", help)
+        return self._subparsers.add_parser(name, help=argparse.SUPPRESS, **kwargs)
+
+
+def grouped_help(summaries):
+    lines = []
+    for title, modules in commands.GROUPS:
+        lines.append(f"{title}:")
+        for module in modules:
+            name = module.__name__.rsplit(".", 1)[-1]
+            lines.append(f"  {name:<10} {summaries[name]}")
+        lines.append("")
+    lines.append("Run `fastmail-sieve COMMAND --help` for a command's options.")
+    return "\n".join(lines)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog=PROG,
         description="Keep Fastmail Sieve rules in git: lint, explain, migrate and sync.",
+        usage=f"{PROG} [-h] [--version] [-C DIR] COMMAND ...",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--version", action="version", version=f"{PROG} {package_version()}"
@@ -31,9 +59,14 @@ def build_parser():
         help="run as if started in DIR (default: the current directory, or the "
         "nearest parent that has a rules/ directory or a fastmail-sieve.toml)",
     )
-    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+    registry = CommandRegistry(
+        parser.add_subparsers(
+            dest="command", metavar="COMMAND", help=argparse.SUPPRESS, prog=PROG
+        )
+    )
     for command in commands.ALL:
-        command.add_parser(subparsers)
+        command.add_parser(registry)
+    parser.epilog = grouped_help(registry.summaries)
     return parser
 
 
