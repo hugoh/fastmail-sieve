@@ -140,6 +140,57 @@ class MarkerStylesTest(unittest.TestCase):
         self.assertFalse(script.has_markers)
 
 
+class ConvertMarkersTest(unittest.TestCase):
+    def legacy(self):
+        return RemoteScript(
+            "R", old_block("a;\n"), "B", old_block("b;\n"), "U", old_block()
+        )
+
+    def test_old_markers_become_the_new_ones_and_everything_else_is_kept(self):
+        script = self.legacy()
+        converted = script.convert_markers()
+        self.assertEqual(
+            (converted.start, converted.middle, converted.end),
+            (block("a;\n"), block("b;\n"), block()),
+        )
+        self.assertEqual(converted.fragments, script.fragments)
+        self.assertEqual(
+            (converted.require, converted.blocked, converted.rules), ("R", "B", "U")
+        )
+
+    def test_text_around_the_markers_is_kept(self):
+        old, new = old_block("x;\n"), block("x;\n")
+        script = RemoteScript(
+            "R", f"# before\n{old}\n# after", "B", old_block(), "U", old_block()
+        )
+        self.assertEqual(script.convert_markers().start, f"# before\n{new}\n# after")
+
+    def test_a_mixed_script_ends_up_entirely_in_the_new_style(self):
+        script = RemoteScript(
+            "R", old_block("a;\n"), "B", block("b;\n"), "U", old_block()
+        )
+        self.assertFalse(script.convert_markers().uses_legacy_markers)
+
+    def test_new_style_and_unmanaged_blocks_are_left_alone(self):
+        marked = RemoteScript("R", block("a;\n"), "B", block(), "U", block())
+        self.assertEqual(marked.convert_markers(), marked)
+        bare = RemoteScript("R", "# code", "B", "", "U", "")
+        self.assertEqual(bare.convert_markers(), bare)
+
+    def test_converting_twice_changes_nothing_more(self):
+        once = self.legacy().convert_markers()
+        self.assertEqual(once.convert_markers(), once)
+
+    def test_uses_legacy_markers_tells_the_styles_apart(self):
+        self.assertTrue(self.legacy().uses_legacy_markers)
+        self.assertFalse(remote().uses_legacy_markers)
+        self.assertFalse(RemoteScript("R", "", "B", "", "U", "").uses_legacy_markers)
+
+    def test_only_one_block_in_the_old_style_still_counts(self):
+        script = RemoteScript("R", old_block(), "B", block(), "U", block())
+        self.assertTrue(script.uses_legacy_markers)
+
+
 class ManagedBlocksTest(unittest.TestCase):
     BARE = RemoteScript("R", "# my start code", "B", "", "U", "")
 

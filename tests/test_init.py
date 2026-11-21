@@ -10,7 +10,7 @@ from fastmail_sieve import config
 from fastmail_sieve.cli import main
 from fastmail_sieve.fastmail.blocks import RemoteScript
 from fastmail_sieve.project import scaffold
-from tests.test_blocks import EMPTY
+from tests.test_blocks import EMPTY, block, old_block
 
 
 class InTempDir(unittest.TestCase):
@@ -151,6 +151,100 @@ class InitCommandTest(InTempDir):
         set_blocks.assert_not_called()
         ask.assert_not_called()
         self.assertIn("already", output)
+
+
+LEGACY = RemoteScript(
+    "R", old_block("a;\n"), "B", old_block("b;\n"), "U", old_block("c;\n")
+)
+
+
+class InitConvertMarkersTest(InTempDir):
+    def convert(self, *argv, script=LEGACY, after=None, answer="y"):
+        after = after if after is not None else script.convert_markers()
+        patches = [
+            mock.patch(
+                "fastmail_sieve.commands.init.gather",
+                return_value=[
+                    (
+                        "t",
+                        {
+                            "session": {"token": "t", "cookie": "c", "username": None},
+                            "api": None,
+                        },
+                    )
+                ],
+            ),
+            mock.patch(
+                "fastmail_sieve.commands.init.get_script", side_effect=[script, after]
+            ),
+            mock.patch("fastmail_sieve.commands.init.set_blocks"),
+            mock.patch("builtins.input", side_effect=[answer]),
+        ]
+        with contextlib.ExitStack() as stack:
+            mocks = [stack.enter_context(p) for p in patches]
+            code, output = run("init", "--remote", "--convert-markers", *argv)
+        return code, output, mocks[2], mocks[3]
+
+    def test_it_rewrites_only_the_markers_after_asking(self):
+        code, output, set_blocks, ask = self.convert()
+        self.assertEqual(code, 0)
+        ask.assert_called_once()
+        [_, sent], _ = set_blocks.call_args
+        self.assertEqual(
+            (sent.start, sent.middle, sent.end),
+            (block("a;\n"), block("b;\n"), block("c;\n")),
+        )
+        self.assertEqual(sent.fragments, LEGACY.fragments)
+        self.assertIn("Converted", output)
+
+    def test_it_warns_that_sieve_sync_will_no_longer_recognise_the_blocks(self):
+        _, output, _, _ = self.convert()
+        self.assertIn("Fastmail-Sieve-Sync", output)
+        self.assertIn("do not run both", output)
+
+    def test_declining_writes_nothing(self):
+        code, _, set_blocks, _ = self.convert(answer="n")
+        self.assertEqual(code, 1)
+        set_blocks.assert_not_called()
+
+    def test_yes_skips_the_question(self):
+        code, _, set_blocks, ask = self.convert("--yes")
+        self.assertEqual(code, 0)
+        ask.assert_not_called()
+        set_blocks.assert_called_once()
+
+    def test_blocks_that_already_use_the_new_markers_are_not_touched(self):
+        new = LEGACY.convert_markers()
+        code, output, set_blocks, ask = self.convert(script=new)
+        self.assertEqual(code, 0)
+        set_blocks.assert_not_called()
+        ask.assert_not_called()
+        self.assertIn("already use", output)
+
+    def test_a_script_without_markers_just_gets_the_new_ones(self):
+        bare = RemoteScript("R", "", "B", "", "U", "")
+        code, _, set_blocks, _ = self.convert(script=bare, after=bare.with_markers())
+        self.assertEqual(code, 0)
+        [_, sent], _ = set_blocks.call_args
+        self.assertTrue(sent.has_markers)
+        self.assertFalse(sent.uses_legacy_markers)
+
+    def test_a_result_that_still_uses_the_old_markers_is_reported(self):
+        code, output, _, _ = self.convert(after=LEGACY)
+        self.assertEqual(code, 1)
+        self.assertIn("diff", output)
+
+    def test_a_result_with_different_rules_is_reported(self):
+        changed = RemoteScript(
+            "R", block("X;\n"), "B", block("b;\n"), "U", block("c;\n")
+        )
+        code, output, _, _ = self.convert(after=changed)
+        self.assertEqual(code, 1)
+
+    def test_it_needs_remote(self):
+        out = run("init", "--convert-markers")
+        self.assertEqual(out[0], 1)
+        self.assertIn("--remote", out[1])
 
 
 if __name__ == "__main__":

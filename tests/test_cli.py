@@ -75,6 +75,8 @@ class ParserTest(unittest.TestCase):
         args = parse("init", "--remote", "--yes")
         self.assertEqual((args.remote, args.yes), (True, True))
         self.assertEqual((parse("init").remote, parse("init").yes), (False, False))
+        self.assertTrue(parse("init", "--remote", "--convert-markers").convert_markers)
+        self.assertFalse(parse("init").convert_markers)
 
     def test_the_project_option(self):
         self.assertEqual(parse("-C", "somewhere", "lint").project, "somewhere")

@@ -38,6 +38,9 @@ are:
 managed with [Fastmail-Sieve-Sync](#relationship-to-fastmail-sieve-sync)
 already has its `Managed by Sieve Sync Start` and `End` markers; those are
 recognised too and left as they are.
+`init --remote --convert-markers` replaces them with this tool's own markers,
+after asking: your rules are untouched, but Sieve-Sync no longer recognises the
+blocks, so it is a one-way step.
 
 Fastmail has no official API for this. The tool calls the private
 `SieveBlocks/get` and `SieveBlocks/set` JMAP methods that Fastmail's own
@@ -75,7 +78,7 @@ fastmail-sieve push              # shows the diff, asks, pushes, verifies
 
 | Command | Does |
 |---------|------|
-| `init` | Create `rules/`, `variables.toml` and a `.gitignore` line; never overwrites. `--remote` also adds the managed blocks to Fastmail's script (once, asks first) |
+| `init` | Create `rules/`, `variables.toml` and a `.gitignore` line; never overwrites. `--remote` also adds the managed blocks to Fastmail's script (once, asks first); `--convert-markers` also replaces Sieve-Sync's marker comments with this tool's own (one way) |
 | `auth` | Check the token and cookie against Fastmail and store them in the keychain. `auth status` shows which credentials are available and where each comes from |
 | `doctor` | Check the project files, the credentials and what Fastmail lets them do |
 | `pull` | Overwrite the three fragments with Fastmail's managed blocks (commit first: local edits are lost) |

@@ -1,7 +1,13 @@
 from dataclasses import dataclass, replace
 
 from fastmail_sieve.fastmail.jmap import invoke, jmap
-from fastmail_sieve.sieve.script import MARKER_END, MARKER_PAIRS, MARKER_START
+from fastmail_sieve.sieve.script import (
+    LEGACY_MARKER_END,
+    LEGACY_MARKER_START,
+    MARKER_END,
+    MARKER_PAIRS,
+    MARKER_START,
+)
 
 # Fastmail's own (undocumented) methods for the Sieve script, not RFC 9661.
 SIEVE_USING = (
@@ -32,6 +38,21 @@ def _with_markers(block):
     if _has_markers(block):
         return block
     return f"{block}\n{MARKER_START}\n{MARKER_END}".strip()
+
+
+LEGACY_PAIR = (LEGACY_MARKER_START, LEGACY_MARKER_END)
+
+
+def _uses_legacy(block):
+    return _markers(block) == LEGACY_PAIR
+
+
+def _convert(block):
+    if not _uses_legacy(block):
+        return block
+    return block.replace(LEGACY_MARKER_START, MARKER_START, 1).replace(
+        LEGACY_MARKER_END, MARKER_END, 1
+    )
 
 
 def _fragment(block):
@@ -111,6 +132,19 @@ class RemoteScript:
             start=_with_markers(self.start),
             middle=_with_markers(self.middle),
             end=_with_markers(self.end),
+        )
+
+    @property
+    def uses_legacy_markers(self):
+        return any(_uses_legacy(b) for b in (self.start, self.middle, self.end))
+
+    def convert_markers(self):
+        """The same script with Sieve-Sync's markers replaced by this tool's own."""
+        return replace(
+            self,
+            start=_convert(self.start),
+            middle=_convert(self.middle),
+            end=_convert(self.end),
         )
 
     def same_blocks(self, other):

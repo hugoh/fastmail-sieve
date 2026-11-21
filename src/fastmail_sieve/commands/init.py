@@ -18,6 +18,13 @@ def add_parser(subparsers):
         "(a one-time write; existing code is kept)",
     )
     parser.add_argument(
+        "--convert-markers",
+        action="store_true",
+        help="with --remote, also replace Fastmail-Sieve-Sync's marker comments "
+        "around your blocks with this tool's own (one way: Sieve-Sync no longer "
+        "recognises the blocks afterwards; your rules are untouched)",
+    )
+    parser.add_argument(
         "--yes", action="store_true", help="with --remote, do not ask first"
     )
     parser.set_defaults(run=run)
@@ -27,6 +34,8 @@ def _remote(args):
     credentials = pick(gather(), session_required=True)
     script = get_script(credentials)
     if script.has_markers:
+        if args.convert_markers:
+            return _convert_markers(args, credentials, script)
         print("✓ Fastmail already has the managed blocks")
         return 0
     print(
@@ -43,7 +52,34 @@ def _remote(args):
     return 0
 
 
+def _convert_markers(args, credentials, script):
+    if not script.uses_legacy_markers:
+        print("✓ The managed blocks already use fastmail-sieve's own markers")
+        return 0
+    print(
+        'This replaces the "Managed by Sieve Sync" comments around your three '
+        "managed blocks with fastmail-sieve's own. Your rules stay exactly as "
+        "they are. Fastmail-Sieve-Sync no longer recognises the blocks afterwards, "
+        "so do not run both tools on the same script."
+    )
+    if not args.yes and not confirm("Convert the markers on Fastmail?"):
+        print("✗ Not changed")
+        return 1
+    set_blocks(credentials, script.convert_markers())
+    after = get_script(credentials)
+    if after.uses_legacy_markers or after.fragments != script.fragments:
+        print(
+            "✗ Fastmail's script does not look as expected after the update: "
+            "check it with `fastmail-sieve diff`"
+        )
+        return 1
+    print("✓ Converted the markers")
+    return 0
+
+
 def run(args):
+    if args.convert_markers and not args.remote:
+        raise RuntimeError("--convert-markers needs --remote")
     created, kept = scaffold(Path.cwd())
     for name in created:
         print(f"created {name}")
