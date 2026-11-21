@@ -121,6 +121,56 @@ class JmapTest(OpenerCase):
             jmap("https://api.fastmail.com/x", CREDS)
 
 
+SESSION = {
+    "apiUrl": "https://api.fastmail.com/jmap/api/",
+    "primaryAccounts": {MAIL: "u1"},
+}
+ANSWER = {"methodResponses": [["Thing/get", {"list": []}, "0"]]}
+
+
+class SessionCacheTest(OpenerCase):
+    def setUp(self):
+        jmap_module._sessions.clear()
+        self.addCleanup(jmap_module._sessions.clear)
+
+    def answers(self, *bodies):
+        pending = list(bodies)
+        opener = self.open_with({})
+
+        def respond(request, timeout=None):
+            handle = mock.MagicMock()
+            handle.__enter__.return_value = io.BytesIO(
+                json.dumps(pending.pop(0)).encode()
+            )
+            return handle
+
+        opener.side_effect = respond
+        return opener
+
+    def test_the_session_is_fetched_once_for_several_calls(self):
+        opener = self.answers(SESSION, ANSWER, ANSWER, ANSWER)
+        for _ in range(3):
+            invoke(CREDS, ["urn:core"], "Thing/get", {})
+        self.assertEqual(opener.call_count, 4)  # one session and three calls
+
+    def test_each_login_gets_its_own_session(self):
+        opener = self.answers(SESSION, ANSWER, SESSION, ANSWER)
+        invoke(CREDS, ["urn:core"], "Thing/get", {})
+        invoke({"token": "another", "cookie": None}, ["urn:core"], "Thing/get", {})
+        self.assertEqual(opener.call_count, 4)
+
+    def test_a_fake_call_is_never_cached(self):
+        calls = []
+
+        def call(url, credentials, body=None):
+            calls.append(body is None)
+            return SESSION if body is None else ANSWER
+
+        invoke(CREDS, ["urn:core"], "Thing/get", {}, call)
+        invoke(CREDS, ["urn:core"], "Thing/get", {}, call)
+        self.assertEqual(calls.count(True), 2)
+
+
 class UnreadableAnswerTest(OpenerCase):
     """Whatever goes wrong on the wire is one readable line, never a traceback."""
 

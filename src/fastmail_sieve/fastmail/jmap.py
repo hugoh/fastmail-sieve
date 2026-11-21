@@ -78,13 +78,22 @@ def jmap(url, credentials, body=None):
         ) from error
 
 
+_sessions = {}
+
+
 def get_session(credentials, call=jmap):
-    return call(SESSION_URL, credentials)
+    """The session for this login: asked for once per run when talking to Fastmail."""
+    if call is not jmap:
+        return call(SESSION_URL, credentials)
+    key = (credentials["token"], credentials.get("cookie"))
+    if key not in _sessions:
+        _sessions[key] = jmap(SESSION_URL, credentials)
+    return _sessions[key]
 
 
 def invoke(credentials, using, method, arguments, call=jmap):
     """Make one JMAP method call on the primary mail account and return its result."""
-    session = call(SESSION_URL, credentials)
+    session = get_session(credentials, call)
     account = _accounts(session).get(MAIL)
     if account is None:
         raise RuntimeError(
