@@ -57,7 +57,7 @@ def build_parser():
         "--project",
         metavar="DIR",
         help="run as if started in DIR (default: the current directory, or the "
-        "nearest parent that has a rules/ directory or a fastmail-sieve.toml)",
+        "nearest parent that has rules fragments or a fastmail-sieve.toml)",
     )
     registry = CommandRegistry(
         parser.add_subparsers(
@@ -82,6 +82,8 @@ def enter_project(args):
         return
     root = config.find_root(Path.cwd())
     if root:
+        if root != Path.cwd():
+            print(f"using the project at {root}", file=sys.stderr)
         os.chdir(root)
         config.use(config.load_config(root))
 

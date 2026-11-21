@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import tempfile
 import unittest
@@ -24,14 +26,27 @@ class FindRootTest(InTempDir):
         (self.root / "a" / "b").mkdir(parents=True)
         self.assertEqual(find_root(self.root / "a" / "b"), self.root)
 
-    def test_a_rules_directory_marks_the_root(self):
+    def test_a_fragment_file_marks_the_root(self):
         (self.root / "rules").mkdir()
+        (self.root / "rules" / "middle.sieve").write_text("")
         (self.root / "docs").mkdir()
         self.assertEqual(find_root(self.root / "docs"), self.root)
 
+    def test_an_empty_rules_directory_is_not_a_project(self):
+        (self.root / "rules").mkdir()
+        (self.root / "docs").mkdir()
+        self.assertIsNone(find_root(self.root / "docs"))
+
+    def test_other_files_in_a_rules_directory_do_not_make_a_project(self):
+        (self.root / "rules").mkdir()
+        (self.root / "rules" / "notes.txt").write_text("")
+        self.assertIsNone(find_root(self.root))
+
     def test_the_nearest_project_wins(self):
         (self.root / "rules").mkdir()
+        (self.root / "rules" / "top.sieve").write_text("")
         (self.root / "inner" / "rules").mkdir(parents=True)
+        (self.root / "inner" / "rules" / "top.sieve").write_text("")
         self.assertEqual(find_root(self.root / "inner"), self.root / "inner")
 
     def test_no_project_gives_none(self):
@@ -93,6 +108,22 @@ class CliProjectTest(InTempDir):
         os.chdir(self.root / "docs")
         self.assertEqual(main(["lint", "--offline"]), 0)
         self.assertEqual(Path.cwd().resolve(), self.root)
+
+    def test_it_says_which_project_it_moved_to(self):
+        self.make_project()
+        os.chdir(self.root / "docs")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            main(["lint", "--offline"])
+        self.assertIn(f"using the project at {self.root}", err.getvalue())
+
+    def test_it_says_nothing_when_already_in_the_project(self):
+        self.make_project()
+        os.chdir(self.root)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            main(["lint", "--offline"])
+        self.assertNotIn("using the project", err.getvalue())
 
     def test_project_option_runs_elsewhere(self):
         self.make_project()

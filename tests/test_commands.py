@@ -101,19 +101,81 @@ class DiffCommandTest(Project):
         self.assertEqual((code, out), (0, ""))
 
 
+REMOTE_BLOCKS = skeleton("t;\n", "m;\n", "b;\n")
+
+
 class PullCommandTest(Project):
-    def test_overwrites_the_fragments_with_the_remote_blocks(self):
-        Path("saved.sieve").write_text(skeleton("t;\n", "m;\n", "b;\n"))
-        with mock.patch(
-            "fastmail_sieve.commands.pull.load_remote",
-            return_value=Path("saved.sieve").read_text(),
+    def pull(self, *argv, answer="y"):
+        with (
+            mock.patch(
+                "fastmail_sieve.commands.pull.load_remote", return_value=REMOTE_BLOCKS
+            ),
+            mock.patch(
+                "builtins.input",
+                side_effect=[answer] if answer != "EOF" else EOFError(),
+            ) as ask,
         ):
-            code, _, _ = run("pull")
+            code, out, err = run("pull", *argv)
+        return code, out + err, ask
+
+    def files(self):
+        return [Path(name).read_text() for name in fragment_files()]
+
+    def test_empty_fragments_are_filled_without_asking(self):
+        code, _, ask = self.pull()
         self.assertEqual(code, 0)
-        self.assertEqual(
-            [Path(name).read_text() for name in fragment_files()],
-            ["t;\n", "m;\n", "b;\n"],
-        )
+        self.assertEqual(self.files(), ["t;\n", "m;\n", "b;\n"])
+        ask.assert_not_called()
+
+    def test_the_untouched_scaffold_is_replaced_without_asking(self):
+        from fastmail_sieve.project import scaffold
+
+        for name in fragment_files():
+            Path(name).unlink()
+        scaffold(Path("."))
+        code, _, ask = self.pull()
+        self.assertEqual((code, self.files()), (0, ["t;\n", "m;\n", "b;\n"]))
+        ask.assert_not_called()
+
+    def test_missing_files_are_created_without_asking(self):
+        Path(fragment_files()[2]).unlink()
+        code, _, ask = self.pull()
+        self.assertEqual((code, self.files()[2]), (0, "b;\n"))
+        ask.assert_not_called()
+
+    def test_nothing_to_do_when_they_already_match(self):
+        for name, text in zip(fragment_files(), ("t;\n", "m;\n", "b;\n"), strict=True):
+            Path(name).write_text(text)
+        code, out, ask = self.pull()
+        self.assertEqual(code, 0)
+        self.assertIn("Already up to date", out)
+        ask.assert_not_called()
+
+    def test_local_changes_are_listed_and_need_a_yes(self):
+        Path(fragment_files()[1]).write_text("# my uncommitted edit\n")
+        code, out, ask = self.pull(answer="y")
+        self.assertEqual(code, 0)
+        ask.assert_called_once()
+        self.assertIn(fragment_files()[1], out)
+        self.assertEqual(self.files()[1], "m;\n")
+
+    def test_declining_leaves_every_file_untouched(self):
+        Path(fragment_files()[1]).write_text("# my uncommitted edit\n")
+        code, out, _ = self.pull(answer="n")
+        self.assertEqual(code, 1)
+        self.assertIn("Not pulled", out)
+        self.assertEqual(self.files(), ["", "# my uncommitted edit\n", ""])
+
+    def test_no_answer_at_all_counts_as_no(self):
+        Path(fragment_files()[0]).write_text("# mine\n")
+        code, _, _ = self.pull(answer="EOF")
+        self.assertEqual((code, self.files()[0]), (1, "# mine\n"))
+
+    def test_yes_replaces_without_asking(self):
+        Path(fragment_files()[1]).write_text("# my uncommitted edit\n")
+        code, _, ask = self.pull("--yes")
+        self.assertEqual((code, self.files()[1]), (0, "m;\n"))
+        ask.assert_not_called()
 
 
 FORMAT_AND_SYNTAX = "Valid format and syntax in your rules"
@@ -298,7 +360,8 @@ class PushCommandTest(unittest.TestCase):
                 "fastmail_sieve.commands.push.write_steps", return_value=[write]
             ),
             mock.patch(
-                "builtins.input", side_effect=[answer] if answer != "EOF" else EOFError
+                "builtins.input",
+                side_effect=[answer] if answer != "EOF" else EOFError(),
             ) as ask,
         ):
             code, out, err = run("push", *argv)

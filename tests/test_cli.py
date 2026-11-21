@@ -65,6 +65,10 @@ class ParserTest(unittest.TestCase):
             )
             self.assertIsNone(parse(command).from_file, command)
 
+    def test_pull_can_skip_the_question(self):
+        self.assertTrue(parse("pull", "--yes").yes)
+        self.assertFalse(parse("pull").yes)
+
     def test_push_strict_and_folders_filter(self):
         self.assertTrue(parse("push", "--strict").strict)
         self.assertFalse(parse("push").strict)

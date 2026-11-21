@@ -29,11 +29,12 @@ def use(config):
 
 
 def find_root(start):
-    """The nearest directory, from `start` upwards, that has a config file or a rules directory."""
+    """The nearest directory, from `start` upwards, that has a config file or a rules fragment."""
+    fragments = Config().fragment_files
     for directory in (start, *start.parents):
-        if (directory / CONFIG_FILE).is_file() or (
-            directory / Config().rules_dir
-        ).is_dir():
+        if (directory / CONFIG_FILE).is_file() or any(
+            (directory / name).is_file() for name in fragments
+        ):
             return directory
     return None
 
