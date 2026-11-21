@@ -74,7 +74,7 @@ fastmail-sieve push              # shows the diff, asks, pushes, verifies
 | Command | Does |
 |---------|------|
 | `init` | Create `rules/`, `variables.toml` and a `.gitignore` line; never overwrites. `--remote` also adds the managed blocks to Fastmail's script (once, asks first) |
-| `auth` | Check the token and cookie against Fastmail and store them in the keychain |
+| `auth` | Check the token and cookie against Fastmail and store them in the keychain. `auth status` shows which credentials are available and where each comes from |
 | `doctor` | Check the project files, the credentials and what Fastmail lets them do |
 | `pull` | Overwrite the three fragments with Fastmail's managed blocks (commit first: local edits are lost) |
 | `push` | Check everything, show the diff, ask, push the managed blocks, then verify with a fresh pull. `--yes` skips the question |
@@ -156,6 +156,13 @@ messages name sources and tiers, not values. Without a keychain (headless
 Linux, CI) use environment variables or the helper command. `lint --offline`
 needs no credentials at all, so run that in CI; pushing from CI is not
 recommended.
+
+`fastmail-sieve auth status` shows, without contacting Fastmail, each source in
+the order it is tried (environment, helper command, keychain), what it provides
+and whether it is complete, and which credentials each kind of command would
+use: the script needs the session pair, while `folders` prefers an API token.
+It never prints a value, and it reports a failing helper command or a missing
+keychain as a state instead of stopping.
 
 `fastmail-sieve doctor` checks the project files, the credentials, what
 Fastmail lets them do (folders, the script, managed blocks) and whether

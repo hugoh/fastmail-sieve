@@ -2,6 +2,7 @@ import json
 import os
 import shlex
 import subprocess
+from dataclasses import dataclass
 
 KEYCHAIN_SERVICE = "fastmail-sieve-rules"
 CREDENTIAL_FIELDS = ("username", "token", "cookie")
@@ -10,6 +11,7 @@ ENV_COOKIE = "FASTMAIL_SIEVE_COOKIE"
 ENV_API_TOKEN = "FASTMAIL_API_TOKEN"
 ENV_COMMAND = "FASTMAIL_SIEVE_CREDENTIAL_COMMAND"
 COMMAND_TIMEOUT_SECONDS = 60
+TIER_LABELS = {"session": "session token + cookie", "api": "API token"}
 
 
 def check_credentials(values):
@@ -177,3 +179,101 @@ def load_credentials(
         (name, found) for name, found in _sources(environ, keychain, run) if found
     )
     return pick(sources, session_required)
+
+
+@dataclass(frozen=True)
+class SourceStatus:
+    """What one credential source offers, for `auth status`: names and states only,
+    with the credentials themselves kept in `found` and never shown."""
+
+    name: str
+    state: str
+    tiers: tuple = ()
+    detail: str = ""
+    found: dict | None = None
+
+
+def _inspect_environment(environ):
+    if not any(environ.get(n) for n in (ENV_TOKEN, ENV_COOKIE, ENV_API_TOKEN)):
+        return SourceStatus(
+            "environment",
+            "not set",
+            detail=f"set {ENV_TOKEN} and {ENV_COOKIE}, or {ENV_API_TOKEN}",
+        )
+    missing = [n for n in (ENV_TOKEN, ENV_COOKIE) if not environ.get(n)]
+    set_half = next((n for n in (ENV_TOKEN, ENV_COOKIE) if environ.get(n)), None)
+    note = f"{set_half} is set but {missing[0]} is missing" if len(missing) == 1 else ""
+    found = _found(
+        _session(environ.get(ENV_TOKEN), environ.get(ENV_COOKIE)),
+        _api(environ.get(ENV_API_TOKEN)),
+    )
+    if found is None:
+        return SourceStatus("environment", "incomplete", detail=note)
+    tiers = tuple(kind for kind in ("session", "api") if found[kind])
+    provided = [ENV_TOKEN, ENV_COOKIE] if found["session"] else []
+    provided += [ENV_API_TOKEN] if found["api"] else []
+    detail = ", ".join(provided) + (f"; {note}" if note else "")
+    return SourceStatus("environment", "found", tiers, detail, found)
+
+
+def _inspect_command(environ, run):
+    command = environ.get(ENV_COMMAND)
+    if not command:
+        return SourceStatus(
+            "credential command",
+            "not set",
+            detail=f"set {ENV_COMMAND} to a command that prints JSON",
+        )
+    try:
+        found = _from_command(command, run)
+    except RuntimeError as error:
+        return SourceStatus("credential command", "failed", detail=str(error))
+    if found is None:
+        return SourceStatus(
+            "credential command",
+            "incomplete",
+            detail="it printed JSON without a token and cookie, or an api_token",
+        )
+    tiers = tuple(kind for kind in ("session", "api") if found[kind])
+    return SourceStatus("credential command", "found", tiers, "", found)
+
+
+def _inspect_keychain(read):
+    values = read()
+    if values is None:
+        return SourceStatus(
+            "keychain",
+            "unavailable",
+            detail="no usable keychain backend here: use environment variables "
+            "or a credential command",
+        )
+    session = _session(
+        values.get("token"), values.get("cookie"), values.get("username")
+    )
+    if session:
+        user = values.get("username")
+        detail = f"stored for {user}" if user else "stored"
+        return SourceStatus(
+            "keychain", "found", ("session",), detail, _found(session, None)
+        )
+    if values.get("token") or values.get("cookie"):
+        return SourceStatus(
+            "keychain",
+            "incomplete",
+            detail="only part of the pair is stored: run `fastmail-sieve auth`",
+        )
+    return SourceStatus(
+        "keychain", "not set", detail="nothing stored: run `fastmail-sieve auth`"
+    )
+
+
+def inspect_sources(environ=None, keychain=None, run=subprocess.run):
+    """Every source, in precedence order, with what it offers. Unlike `gather`, a
+    broken source is reported as a state instead of raising."""
+    environ = os.environ if environ is None else environ
+    keychain = keychain or read_keychain
+    return [
+        _inspect_environment(environ),
+        _inspect_command(environ, run),
+        _inspect_keychain(keychain),
+    ]

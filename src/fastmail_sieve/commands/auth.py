@@ -4,7 +4,14 @@ import sys
 
 from fastmail_sieve.commands._options import progress_console
 from fastmail_sieve.fastmail.auth_input import parse_curl, validate_token
-from fastmail_sieve.fastmail.credentials import ENV_COOKIE, ENV_TOKEN, store_keychain
+from fastmail_sieve.fastmail.credentials import (
+    ENV_COOKIE,
+    ENV_TOKEN,
+    TIER_LABELS,
+    inspect_sources,
+    pick,
+    store_keychain,
+)
 from fastmail_sieve.fastmail.jmap import SESSION_URL, jmap
 
 DISCOVERY_NOTICE = """\
@@ -37,6 +44,16 @@ def add_parser(subparsers):
         "(needs the auth extra; reads other apps' stored data)",
     )
     parser.set_defaults(run=run)
+    actions = parser.add_subparsers(dest="auth_command", metavar="[status]")
+    status = actions.add_parser(
+        "status",
+        help="show which credentials are available and where each comes from",
+        description="Show each credential source in the order it is tried, what it "
+        "provides, and which credentials each kind of command would use. Values "
+        "are never shown. Nothing is sent to Fastmail: run `doctor` to check "
+        "that they work.",
+    )
+    status.set_defaults(run=run_status)
 
 
 def discover_cookie(token, check):
@@ -87,3 +104,51 @@ def run(args):
         markup=False,
     )
     return 0
+
+
+MARKS = {"found": "✓", "incomplete": "!", "failed": "✗"}
+USES = (
+    ("script (pull, push, diff, explain, ...)", True),
+    ("folders (folders, lint's folder checks)", False),
+)
+
+
+def _row(index, status):
+    mark = MARKS.get(status.state, "·")
+    if status.state == "found":
+        provides = ", ".join(TIER_LABELS[kind] for kind in status.tiers)
+        text = f"found: {provides}"
+        if status.detail:
+            text += f" ({status.detail})"
+    else:
+        text = status.state + (f" ({status.detail})" if status.detail else "")
+    return f"  {mark} {index}. {status.name:<18} {text}"
+
+
+def _use(gathered, session_required):
+    try:
+        chosen = pick(gathered, session_required)
+    except RuntimeError:
+        only_api = any(found["api"] for _, found in gathered)
+        if session_required and only_api:
+            return None, (
+                "not available: only an API token is available, which cannot read "
+                "the script (run `fastmail-sieve auth`)"
+            )
+        return None, "not available (run `fastmail-sieve auth`)"
+    return chosen, f"{TIER_LABELS[chosen['kind']]} from {chosen['source']}"
+
+
+def run_status(args):
+    statuses = inspect_sources()
+    print("Credential sources, in the order they are tried:")
+    for index, status in enumerate(statuses, start=1):
+        print(_row(index, status))
+    gathered = [(s.name, s.found) for s in statuses if s.found]
+    print("\nUsed for:")
+    usable = []
+    for label, session_required in USES:
+        chosen, text = _use(gathered, session_required)
+        usable.append(chosen is not None)
+        print(f"  {label:<40} {text}")
+    return 0 if any(usable) else 1
