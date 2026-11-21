@@ -65,6 +65,11 @@ class ParserTest(unittest.TestCase):
             )
             self.assertIsNone(parse(command).from_file, command)
 
+    def test_lint_and_explain_can_target_the_live_script(self):
+        for command in ("lint", "explain"):
+            self.assertTrue(parse(command, "--live").live, command)
+            self.assertFalse(parse(command).live, command)
+
     def test_pull_can_skip_the_question(self):
         self.assertTrue(parse("pull", "--yes").yes)
         self.assertFalse(parse("pull").yes)

@@ -11,7 +11,7 @@ PASSWORD = b"safe-storage-password"
 
 def encrypt(plain, password=PASSWORD):
     """How Chromium on macOS stores a cookie: v10 + AES-128-CBC, PBKDF2 key, 16 spaces IV."""
-    key = PBKDF2(password, b"saltysalt", 16, count=1003)
+    key = PBKDF2(password, b"saltysalt", 16, count=1003)  # ty: ignore[invalid-argument-type]
     return b"v10" + AES.new(key, AES.MODE_CBC, b" " * 16).encrypt(pad(plain, 16))
 
 

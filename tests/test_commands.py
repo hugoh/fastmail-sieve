@@ -8,7 +8,12 @@ from unittest import mock
 
 from fastmail_sieve.cli import main
 from fastmail_sieve.sieve.lint import FASTMAIL_REQUIRE
-from fastmail_sieve.sieve.script import MARKER_END, MARKER_START, fragment_files
+from fastmail_sieve.sieve.script import (
+    MARKER_END,
+    MARKER_START,
+    assemble,
+    fragment_files,
+)
 from fastmail_sieve.steps import Result, Step
 from tests.test_sieve_blocks import skeleton
 
@@ -176,6 +181,88 @@ class PullCommandTest(Project):
         code, _, ask = self.pull("--yes")
         self.assertEqual((code, self.files()[1]), (0, "m;\n"))
         ask.assert_not_called()
+
+
+LIVE_RULE = 'if address :is "from" "live@x.y" {\n  fileinto "INBOX.live";\n  stop;\n}\n'
+
+
+class LiveTargetTest(Project):
+    """--live checks Fastmail's script exactly as it is; your rules play no part."""
+
+    middle = "if true {\n  stop;\n"
+
+    def save_live(self, middle=LIVE_RULE, name="live.sieve"):
+        Path(name).write_text(assemble(REMOTE, "", middle, ""))
+
+    def test_your_rules_are_not_checked_and_do_not_matter(self):
+        self.save_live()
+        code, out, _ = run("lint", "--live", "--offline", "--from-file", "live.sieve")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("your rules", out)
+
+    def test_the_default_still_checks_your_rules(self):
+        self.save_live()
+        code, out, _ = run("lint", "--offline")
+        self.assertEqual(code, 1)
+        self.assertIn("✗ Valid format and syntax in your rules", out)
+
+    def test_a_problem_in_the_live_script_is_reported(self):
+        self.save_live("if {\n")
+        code, out, _ = run("lint", "--live", "--offline", "--from-file", "live.sieve")
+        self.assertEqual(code, 1)
+        self.assertIn("✗ Valid syntax in the live script", out)
+
+    def test_live_folder_checks_name_the_live_script(self):
+        self.save_live('fileinto :mailboxid "GONE" "x";\n')
+        boxes = [{"id": "P1", "name": "home", "parentId": None, "role": None}]
+        with (
+            mock.patch(
+                "fastmail_sieve.steps.pick", return_value={"token": "t", "cookie": "c"}
+            ),
+            mock.patch("fastmail_sieve.steps.fetch_mailboxes", return_value=boxes),
+        ):
+            code, out, _ = run("lint", "--live", "--from-file", "live.sieve")
+        self.assertEqual(code, 1)
+        self.assertIn("✗ Valid folder stable ids", out)
+        self.assertIn("GONE does not exist", out)
+        self.assertIn("Fastmail's script", out)
+        self.assertNotIn("rules/", out)
+
+    def test_live_without_a_file_needs_fastmail_so_offline_is_refused(self):
+        code, _, err = run("lint", "--live", "--offline")
+        self.assertEqual(code, 1)
+        self.assertIn("--live needs Fastmail", err)
+
+    def test_live_cannot_fix_because_it_never_touches_your_files(self):
+        self.save_live()
+        code, _, err = run("lint", "--live", "--fix", "--from-file", "live.sieve")
+        self.assertEqual(code, 1)
+        self.assertIn("--fix", err)
+        self.assertEqual(Path(fragment_files()[1]).read_text(), self.middle)
+
+    def test_explain_live_shows_what_is_live_not_your_rules(self):
+        Path(fragment_files()[1]).write_text(FILE_A_RULE)
+        self.save_live()
+        code, out, _ = run(
+            "explain", "--live", "--from-file", "live.sieve", "--color", "never"
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("live@x.y", out)
+        self.assertNotIn("a@b.c", out)
+
+    def test_explain_without_live_shows_your_rules(self):
+        Path(fragment_files()[1]).write_text(FILE_A_RULE)
+        self.save_live()
+        _, out, _ = run("explain", "--from-file", "live.sieve", "--color", "never")
+        self.assertIn("a@b.c", out)
+        self.assertNotIn("live@x.y", out)
+
+    def test_explain_live_of_a_script_without_blocks_still_explains_its_rules(self):
+        Path("bare.sieve").write_text('require ["fileinto"];\nfileinto "INBOX.x";\n')
+        code, _, err = run(
+            "explain", "--live", "--from-file", "bare.sieve", "--color", "never"
+        )
+        self.assertEqual(code, 0, err)
 
 
 FORMAT_AND_SYNTAX = "Valid format and syntax in your rules"

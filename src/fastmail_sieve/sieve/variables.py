@@ -203,7 +203,10 @@ def load_variable_docs():
         raise RuntimeError(f"{path}: {error}") from error
 
 
-def load_report(script_text):
+def load_report(script_text, fragments=None):
+    """The variable report; `fragments` (default: your local ones) say which names
+    your own rules set."""
+    fragments = read_fragments() if fragments is None else fragments
     return analyze(
-        script_text, load_variable_docs(), fragment_variable_names(read_fragments())
+        script_text, load_variable_docs(), fragment_variable_names(fragments)
     )
