@@ -2,9 +2,11 @@ import io
 import json
 import unittest
 import urllib.error
+import urllib.request
 from email.message import Message
 from unittest import mock
 
+from fastmail_sieve.fastmail import jmap as jmap_module
 from fastmail_sieve.fastmail.jmap import SESSION_URL, invoke, jmap
 
 CREDS = {"token": "fma1-secret", "cookie": "__Http-s_x=y"}
@@ -58,22 +60,26 @@ class InvokeTest(unittest.TestCase):
             invoke(CREDS, ["urn:core"], "Thing/get", {}, call)
 
 
-class JmapTest(unittest.TestCase):
+class OpenerCase(unittest.TestCase):
     def open_with(self, outcome):
-        patcher = mock.patch("fastmail_sieve.fastmail.jmap.urllib.request.urlopen")
-        urlopen = patcher.start()
+        patcher = mock.patch.object(jmap_module, "_opener")
+        opener = patcher.start()
         self.addCleanup(patcher.stop)
         if isinstance(outcome, Exception):
-            urlopen.side_effect = outcome
+            opener.open.side_effect = outcome
         else:
             response = mock.MagicMock()
             response.__enter__.return_value = io.BytesIO(json.dumps(outcome).encode())
-            urlopen.return_value = response
-        return urlopen
+            opener.open.return_value = response
+        return opener.open
 
+
+class JmapTest(OpenerCase):
     def test_sends_the_credentials_and_a_json_body(self):
         urlopen = self.open_with({"ok": True})
-        self.assertEqual(jmap("https://api.example/x", CREDS, {"a": 1}), {"ok": True})
+        self.assertEqual(
+            jmap("https://api.fastmail.com/x", CREDS, {"a": 1}), {"ok": True}
+        )
         request = urlopen.call_args.args[0]
         self.assertEqual(request.get_header("Authorization"), "Bearer fma1-secret")
         self.assertEqual(request.get_header("Cookie"), "__Http-s_x=y")
@@ -82,14 +88,14 @@ class JmapTest(unittest.TestCase):
 
     def test_an_api_token_has_no_cookie_header(self):
         urlopen = self.open_with({"ok": True})
-        jmap("https://api.example/x", {"token": "api-1", "cookie": None})
+        jmap("https://api.fastmail.com/x", {"token": "api-1", "cookie": None})
         request = urlopen.call_args.args[0]
         self.assertEqual(request.get_header("Authorization"), "Bearer api-1")
         self.assertFalse(request.has_header("Cookie"))
 
     def test_a_get_has_no_body(self):
         urlopen = self.open_with({"ok": True})
-        jmap("https://api.example/x", CREDS)
+        jmap("https://api.fastmail.com/x", CREDS)
         self.assertIsNone(urlopen.call_args.args[0].data)
 
     def test_an_expired_session_says_how_to_fix_it(self):
@@ -97,19 +103,80 @@ class JmapTest(unittest.TestCase):
             urllib.error.HTTPError("u", 401, "Unauthorized", Message(), None)
         )
         with self.assertRaisesRegex(RuntimeError, r"HTTP 401.*fastmail-sieve auth"):
-            jmap("https://api.example/x", CREDS)
+            jmap("https://api.fastmail.com/x", CREDS)
 
     def test_other_http_errors_are_reported_with_the_code(self):
         self.open_with(
             urllib.error.HTTPError("u", 500, "Server Error", Message(), None)
         )
         with self.assertRaisesRegex(RuntimeError, "HTTP 500"):
-            jmap("https://api.example/x", CREDS)
+            jmap("https://api.fastmail.com/x", CREDS)
 
     def test_network_failures_are_readable(self):
         self.open_with(urllib.error.URLError("no route"))
         with self.assertRaisesRegex(RuntimeError, "Could not reach Fastmail: no route"):
-            jmap("https://api.example/x", CREDS)
+            jmap("https://api.fastmail.com/x", CREDS)
+
+
+class UrlGuardTest(OpenerCase):
+    """The token and cookie are a full web session: they go only to fastmail.com over https."""
+
+    def refused(self, url, pattern):
+        opened = self.open_with({"ok": True})
+        with self.assertRaises(RuntimeError) as raised:
+            jmap(url, CREDS)
+        self.assertRegex(str(raised.exception), pattern)
+        self.assertNotIn("fma1-secret", str(raised.exception))
+        self.assertNotIn("Http-s_", str(raised.exception))
+        opened.assert_not_called()
+
+    def test_plain_http_is_refused(self):
+        self.refused("http://api.fastmail.com/jmap/session", "https")
+
+    def test_other_hosts_are_refused_and_named(self):
+        for url in (
+            "https://evil.example/",
+            "https://api.fastmail.com.evil.example/",
+            "https://notfastmail.com/",
+            "https://api.fastmail.com@evil.example/",
+        ):
+            with self.subTest(url=url):
+                self.refused(url, "not a fastmail.com address")
+
+    def test_fastmail_hosts_are_accepted(self):
+        for url in (
+            "https://api.fastmail.com/jmap/api/",
+            "https://fastmail.com/x",
+            "https://API.FASTMAIL.COM/x",
+        ):
+            with self.subTest(url=url):
+                opened = self.open_with({"ok": True})
+                self.assertEqual(jmap(url, CREDS), {"ok": True})
+                opened.assert_called_once()
+
+    def test_redirects_are_never_followed(self):
+        handler = jmap_module._NoRedirect()
+        request = urllib.request.Request("https://api.fastmail.com/x")
+        self.assertIsNone(
+            handler.redirect_request(
+                request, None, 302, "Found", {}, "https://evil.example/"
+            )
+        )
+
+    def test_a_redirect_answer_is_reported_as_refused(self):
+        self.open_with(urllib.error.HTTPError("u", 302, "Found", Message(), None))
+        with self.assertRaisesRegex(RuntimeError, "redirect.*refused"):
+            jmap("https://api.fastmail.com/x", CREDS)
+
+    def test_a_foreign_api_url_in_the_session_never_receives_the_login(self):
+        session = {
+            "apiUrl": "https://evil.example/api",
+            "primaryAccounts": {MAIL: "u1"},
+        }
+        opened = self.open_with(session)
+        with self.assertRaisesRegex(RuntimeError, "evil.example"):
+            invoke(CREDS, ["urn:core"], "Thing/get", {})
+        self.assertEqual(opened.call_count, 1)
 
 
 if __name__ == "__main__":
