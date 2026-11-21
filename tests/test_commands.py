@@ -239,6 +239,24 @@ class ExplainCommandTest(Project):
         self.assertEqual(code, 0)
         self.assertIn("a@b.c", out)
 
+    def test_a_broken_variables_file_names_the_file(self):
+        Path("variables.toml").write_text("this is = = not toml\n")
+        code, _, err = self.explain()
+        self.assertEqual(code, 1)
+        self.assertIn("variables.toml", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_a_missing_variables_file_says_how_to_create_it(self):
+        Path("variables.toml").unlink()
+        code, _, err = self.explain()
+        self.assertEqual(code, 1)
+        self.assertIn("fastmail-sieve init", err)
+
+    def test_a_mistyped_from_file_is_a_clear_failure(self):
+        code, _, err = run("diff", "--from-file", "nope.sieve")
+        self.assertEqual(code, 1)
+        self.assertIn("nope.sieve", err)
+
     def test_an_unknown_topic_is_a_usage_error(self):
         with self.assertRaises(SystemExit) as raised:
             self.explain("nope")

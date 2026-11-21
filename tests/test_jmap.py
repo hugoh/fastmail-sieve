@@ -69,7 +69,10 @@ class OpenerCase(unittest.TestCase):
             opener.open.side_effect = outcome
         else:
             response = mock.MagicMock()
-            response.__enter__.return_value = io.BytesIO(json.dumps(outcome).encode())
+            body = (
+                outcome if isinstance(outcome, bytes) else json.dumps(outcome).encode()
+            )
+            response.__enter__.return_value = io.BytesIO(body)
             opener.open.return_value = response
         return opener.open
 
@@ -116,6 +119,69 @@ class JmapTest(OpenerCase):
         self.open_with(urllib.error.URLError("no route"))
         with self.assertRaisesRegex(RuntimeError, "Could not reach Fastmail: no route"):
             jmap("https://api.fastmail.com/x", CREDS)
+
+
+class UnreadableAnswerTest(OpenerCase):
+    """Whatever goes wrong on the wire is one readable line, never a traceback."""
+
+    def failure(self):
+        with self.assertRaises(RuntimeError) as raised:
+            jmap("https://api.fastmail.com/x", CREDS)
+        return str(raised.exception)
+
+    def test_an_html_page_with_http_200_is_explained(self):
+        self.open_with(b"<html>please sign in</html>")
+        self.assertRegex(self.failure(), "did not answer with JSON.*proxy")
+
+    def test_a_timeout_on_connect_names_the_limit(self):
+        self.open_with(TimeoutError("timed out"))
+        self.assertRegex(self.failure(), "did not answer within 30 seconds")
+
+    def test_a_timeout_while_reading_the_body_names_the_limit(self):
+        class Stalls(io.BytesIO):
+            def read(self, *args):
+                raise TimeoutError("timed out")
+
+        opener = self.open_with({})
+        opener.return_value.__enter__.return_value = Stalls()
+        self.assertRegex(self.failure(), "did not answer within 30 seconds")
+
+    def test_a_dropped_connection_is_reported(self):
+        self.open_with(ConnectionResetError("reset by peer"))
+        self.assertRegex(self.failure(), "Could not reach Fastmail: .*reset by peer")
+
+
+class InvokeShapeTest(unittest.TestCase):
+    def call_returning(self, session, reply=None):
+        def call(url, credentials, body=None):
+            return session if body is None else reply
+
+        return call
+
+    def test_credentials_with_no_mail_account_say_what_is_missing(self):
+        call = self.call_returning(
+            {"apiUrl": "https://api.fastmail.com/x", "primaryAccounts": {}}
+        )
+        with self.assertRaisesRegex(RuntimeError, "no mail account.*Email scope"):
+            invoke(CREDS, ["urn:core"], "Thing/get", {}, call)
+
+    def test_an_answer_without_method_responses_is_explained(self):
+        session = {
+            "apiUrl": "https://api.fastmail.com/x",
+            "primaryAccounts": {MAIL: "u1"},
+        }
+        for reply in ({}, {"methodResponses": []}, None, "text"):
+            with (
+                self.subTest(reply=reply),
+                self.assertRaisesRegex(RuntimeError, "not in the expected form"),
+            ):
+                invoke(
+                    CREDS,
+                    ["urn:core"],
+                    "Thing/get",
+                    {},
+                    self.call_returning(session, reply),
+                )
 
 
 class UrlGuardTest(OpenerCase):

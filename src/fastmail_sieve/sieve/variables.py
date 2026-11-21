@@ -1,4 +1,5 @@
 import re
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -196,7 +197,10 @@ def load_variable_docs():
         raise RuntimeError(
             f"{path} not found: create it with `fastmail-sieve init`"
         ) from error
-    return load_descriptions(text)
+    try:
+        return load_descriptions(text)
+    except tomllib.TOMLDecodeError as error:
+        raise RuntimeError(f"{path}: {error}") from error
 
 
 def load_report(script_text):

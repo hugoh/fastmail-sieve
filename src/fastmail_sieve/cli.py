@@ -95,7 +95,7 @@ def main(argv=None):
     try:
         enter_project(args)
         return args.run(args)
-    except RuntimeError as error:
+    except (RuntimeError, OSError, ValueError) as error:
         print(f"✗ {error}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

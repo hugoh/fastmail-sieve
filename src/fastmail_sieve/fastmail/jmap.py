@@ -65,6 +65,17 @@ def jmap(url, credentials, body=None):
         ) from error
     except urllib.error.URLError as error:
         raise RuntimeError(f"Could not reach Fastmail: {error.reason}") from error
+    except TimeoutError as error:
+        raise RuntimeError(
+            f"Fastmail did not answer within {TIMEOUT_SECONDS} seconds"
+        ) from error
+    except OSError as error:
+        raise RuntimeError(f"Could not reach Fastmail: {error}") from error
+    except ValueError as error:
+        raise RuntimeError(
+            "Fastmail did not answer with JSON: is something between you and "
+            "Fastmail, such as a proxy or a captive portal?"
+        ) from error
 
 
 def get_session(credentials, call=jmap):
@@ -74,7 +85,12 @@ def get_session(credentials, call=jmap):
 def invoke(credentials, using, method, arguments, call=jmap):
     """Make one JMAP method call on the primary mail account and return its result."""
     session = call(SESSION_URL, credentials)
-    account = session["primaryAccounts"][MAIL]
+    account = _accounts(session).get(MAIL)
+    if account is None:
+        raise RuntimeError(
+            "Fastmail offered no mail account to these credentials: "
+            "an API token needs the Email scope"
+        )
     reply = call(
         session["apiUrl"],
         credentials,
@@ -83,10 +99,20 @@ def invoke(credentials, using, method, arguments, call=jmap):
             "methodCalls": [[method, {"accountId": account, **arguments}, "0"]],
         },
     )
-    name, result, _ = reply["methodResponses"][0]
+    try:
+        name, result, _ = reply["methodResponses"][0]
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        raise RuntimeError(
+            f"Fastmail's answer to {method} was not in the expected form"
+        ) from error
     if name == "error":
         reason = result.get("description") or result.get("type") or result
         raise RuntimeError(
             f"Fastmail rejected {method}: {result.get('type', 'error')}: {reason}"
         )
     return result
+
+
+def _accounts(session):
+    accounts = session.get("primaryAccounts") if isinstance(session, dict) else None
+    return accounts if isinstance(accounts, dict) else {}

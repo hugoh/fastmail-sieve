@@ -1,5 +1,4 @@
 import sys
-from pathlib import Path
 
 from fastmail_sieve.commands._options import add_color, add_from_file, progress_console
 from fastmail_sieve.remote import load_assembled
@@ -10,8 +9,7 @@ from fastmail_sieve.sieve.report import (
     render,
 )
 from fastmail_sieve.sieve.script import fragment_files, read_fragments
-from fastmail_sieve.sieve.variable_docs import load_descriptions
-from fastmail_sieve.sieve.variables import descriptions_file, load_report
+from fastmail_sieve.sieve.variables import load_report, load_variable_docs
 from fastmail_sieve.sieve.variables import render as render_variables
 from fastmail_sieve.ui.tables import terminal_width, use_color
 
@@ -36,10 +34,6 @@ def add_parser(subparsers):
     parser.set_defaults(run=run)
 
 
-def _docs():
-    return load_descriptions(Path(descriptions_file()).read_text(encoding="utf-8"))
-
-
 def run(args):
     script = load_assembled(args.from_file, progress_console())
     width, color = terminal_width(args.width), use_color(args.color)
@@ -52,9 +46,9 @@ def run(args):
             print(f"error: {error}", file=sys.stderr)
         return 0
     if args.topic == "script":
-        rules, sequence = build_full_rules(script, _docs()), True
+        rules, sequence = build_full_rules(script, load_variable_docs()), True
     else:
         fragments = dict(zip(fragment_files(), read_fragments(), strict=True))
-        rules, sequence = build_rules(fragments, script, _docs()), False
+        rules, sequence = build_rules(fragments, script, load_variable_docs()), False
     print(render(rules, width, color, disabled_ui_rules(script), sequence))
     return 0

@@ -146,6 +146,21 @@ class MainTest(unittest.TestCase):
         self.assertEqual(out, "")
         self.assertEqual(err.strip(), "✗ Missing token in the keychain")
 
+    def test_file_and_value_errors_are_one_line_failures_too(self):
+        for error in (FileNotFoundError("nope.sieve"), ValueError("not valid here")):
+            with (
+                self.subTest(error=type(error).__name__),
+                mock.patch(
+                    "fastmail_sieve.commands.folders.load_credentials",
+                    side_effect=error,
+                ),
+            ):
+                code, out, err = self.run_main("folders")
+            self.assertEqual(code, 1)
+            self.assertEqual(out, "")
+            self.assertEqual(len(err.strip().splitlines()), 1)
+            self.assertTrue(err.startswith("✗ "))
+
     def test_a_command_exit_code_is_returned(self):
         with mock.patch("fastmail_sieve.commands.lint.run_steps", return_value=1):
             self.assertEqual(self.run_main("lint", "--offline")[0], 1)
