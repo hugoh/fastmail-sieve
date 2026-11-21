@@ -1,0 +1,33 @@
+from fastmail_sieve.commands import (
+    assemble,
+    auth,
+    diff,
+    doctor,
+    explain,
+    folders,
+    format,
+    init,
+    lint,
+    migrate,
+    pull,
+    push,
+    variables,
+    warnings,
+)
+
+ALL = (
+    init,
+    auth,
+    pull,
+    push,
+    diff,
+    assemble,
+    lint,
+    doctor,
+    format,
+    explain,
+    warnings,
+    variables,
+    migrate,
+    folders,
+)

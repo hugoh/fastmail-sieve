@@ -1,0 +1,46 @@
+fastmail-sieve
+Copyright (c) 2026 Hugo Haas, released under the MIT license (see LICENSE).
+
+This project builds on the work of the following project.
+
+Fastmail-Sieve-Sync
+https://github.com/fuyu0425/Fastmail-Sieve-Sync
+
+Fastmail-Sieve-Sync showed that Fastmail's private SieveBlocks/get and
+SieveBlocks/set JMAP methods exist and what fields they carry. fastmail-sieve
+reimplements, in its own code and from reading that source, the way it:
+
+  - reads the six parts of the script (require, start, blocked, middle, rules
+    and end) and joins them with newlines into the full script;
+  - writes back only the start, middle and end blocks;
+  - recognises the "Managed by Sieve Sync" markers around those blocks, leaves
+    them as it finds them, and replaces the text between them.
+
+Scripts that have no markers get fastmail-sieve's own ("Managed by
+fastmail-sieve") instead. Both styles are recognised so that a script already
+managed with Fastmail-Sieve-Sync keeps working. No source file was copied
+verbatim. The license of Fastmail-Sieve-Sync follows.
+
+----------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2023 Yu-Fu Fu
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

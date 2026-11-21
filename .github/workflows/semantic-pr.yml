@@ -1,0 +1,18 @@
+---
+name: semantic-pr
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-caller-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semantic-pr:
+    uses: hugoh/gh-workflows/.github/workflows/semantic-pr.yml@30ea88e8815001f26c86977d2ba60ddddebf42e0 # v1.40.23
+    permissions:
+      pull-requests: read

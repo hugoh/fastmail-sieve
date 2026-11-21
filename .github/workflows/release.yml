@@ -1,0 +1,44 @@
+---
+name: release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-caller-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    uses: hugoh/gh-workflows/.github/workflows/release.yml@30ea88e8815001f26c86977d2ba60ddddebf42e0 # v1.40.23
+    permissions:
+      contents: write
+
+  publish-pypi:
+    needs: release
+    if: needs.release.outputs.tag != ''
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ needs.release.outputs.tag }}
+
+      - uses: hugoh/gh-workflows/setup@30ea88e8815001f26c86977d2ba60ddddebf42e0 # v1.40.23
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          skip-existing: true

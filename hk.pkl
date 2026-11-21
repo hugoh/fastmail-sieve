@@ -1,0 +1,41 @@
+amends "package://github.com/jdx/hk/releases/download/v2.12.0/hk@2.12.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.12.0/hk@2.12.0#/Builtins.pkl"
+import "package://github.com/hugoh/hk-config/releases/download/v3.1.5/hk-config@3.1.5#/base.pkl" as Base
+
+min_hk_version = Base.min_hk_version
+
+local linters = new Mapping<String, Step> {
+    ...Base.base
+    ...Base.python
+    ["tests"] {
+        check = "uv run python -m unittest discover -s tests -t ."
+        profiles = List("ci")
+    }
+    ["package-check"] {
+        check = "mise run package-check"
+        profiles = List("ci")
+    }
+}
+
+hooks {
+    ["pre-commit"] {
+        fix = true
+        stash = "git"
+        steps = linters
+    }
+    ["pre-push"] {
+        steps = linters
+    }
+    ["check"] {
+        steps = linters
+    }
+    ["fix"] {
+        fix = true
+        steps = linters
+    }
+    ["commit-msg"] {
+        steps = new Mapping<String, Step> {
+            ...Base.commit_msg
+        }
+    }
+}

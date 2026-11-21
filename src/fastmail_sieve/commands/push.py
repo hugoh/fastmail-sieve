@@ -1,0 +1,49 @@
+from rich.console import Console
+
+from fastmail_sieve.commands._options import confirm
+from fastmail_sieve.commands.diff import unified
+from fastmail_sieve.steps import Session, check_steps, run_steps, write_steps
+
+
+def add_parser(subparsers):
+    parser = subparsers.add_parser(
+        "push",
+        help="check everything, show what changes, then push your rules to Fastmail",
+    )
+    parser.add_argument(
+        "--yes", action="store_true", help="push without asking for confirmation"
+    )
+    parser.set_defaults(run=run)
+
+
+def _show(lines, console):
+    for line in lines:
+        style = (
+            "green"
+            if line.startswith("+") and not line.startswith("+++")
+            else (
+                "red" if line.startswith("-") and not line.startswith("---") else "dim"
+            )
+        )
+        console.print(line, style=style, markup=False)
+
+
+def run(args):
+    console = Console(highlight=False)
+    session = Session()
+    code = run_steps(check_steps(session), console)
+    if code:
+        return code
+    changes = unified(session.remote, session.assembled)
+    if not changes:
+        console.print(
+            "Nothing to push: Fastmail already has these rules.", markup=False
+        )
+        return 0
+    console.print()
+    _show(changes, console)
+    console.print()
+    if not args.yes and not confirm("Push these changes to Fastmail?"):
+        console.print("✗ Not pushed", style="red", markup=False)
+        return 1
+    return run_steps(write_steps(session), console)
