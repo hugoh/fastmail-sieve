@@ -139,7 +139,7 @@ def check_fragments(*fragments):
 
 def check_markers(text):
     found = [line for line in text.splitlines() if line in STARTS + ENDS]
-    pairs = list(zip(found[0::2], found[1::2], strict=True))
+    pairs = list(zip(found[0::2], found[1::2], strict=False))
     if len(found) != 2 * MANAGED_BLOCKS or any(
         pair not in MARKER_PAIRS for pair in pairs
     ):
