@@ -76,8 +76,17 @@ class CheckTest(unittest.TestCase):
             self.problems('fileinto :mailboxid "P-sh" "INBOX.Inbox.Shopping";'), []
         )
         self.assertEqual(self.problems('fileinto :mailboxid "P-in" "INBOX";'), [])
+
+    def test_inbox_is_case_insensitive_as_the_second_segment(self):
+        for written in ("INBOX.INBOX.Shopping", "INBOX.inbox.Shopping"):
+            with self.subTest(written=written):
+                self.assertEqual(
+                    self.problems(f'fileinto :mailboxid "P-sh" "{written}";'), []
+                )
+
+    def test_a_real_difference_next_to_inbox_is_still_reported(self):
         self.assertEqual(
-            len(self.problems('fileinto :mailboxid "P-sh" "INBOX.INBOX.Shopping";')), 1
+            len(self.problems('fileinto :mailboxid "P-sh" "INBOX.INBOX.Cart";')), 1
         )
 
     def test_emoji_variation_selectors_do_not_matter(self):

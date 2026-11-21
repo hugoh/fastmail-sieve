@@ -20,8 +20,14 @@ def sieve_folder_name(name):
     name = name.replace("/", FOLDER_SEPARATOR)
     if name.lower() == "inbox":
         return INBOX
-    if not name.startswith(INBOX_PREFIX):
-        name = INBOX_PREFIX + name
+    if name.startswith(INBOX_PREFIX):
+        return name
+    return canonical_inbox(INBOX_PREFIX + name)
+
+
+def canonical_inbox(name):
+    """Spell an Inbox right after the INBOX. prefix as Fastmail lists it: Sieve
+    treats its case as insignificant, so any spelling is valid."""
     return INBOX_UNDER_INBOX.sub(INBOX_PREFIX + INBOX_FOLDER, name)
 
 
