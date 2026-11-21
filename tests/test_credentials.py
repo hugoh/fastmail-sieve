@@ -4,11 +4,14 @@ import unittest
 from unittest import mock
 
 from fastmail_sieve.fastmail.credentials import (
+    KEYCHAIN_SERVICE,
+    LEGACY_KEYCHAIN_SERVICE,
     LazySources,
-    check_credentials,
     gather,
     load_credentials,
     pick,
+    read_keychain,
+    store_keychain,
 )
 
 SESSION_ENV = {
@@ -30,20 +33,46 @@ def command_result(payload, returncode=0):
     )
 
 
-class CheckCredentialsTest(unittest.TestCase):
-    def test_complete_credentials_pass(self):
-        self.assertEqual(check_credentials(KEYCHAIN), KEYCHAIN)
+class KeychainNameTest(unittest.TestCase):
+    def fake_keyring(self, stored):
+        keyring = mock.Mock()
+        keyring.get_password.side_effect = lambda service, field: stored.get(
+            service, {}
+        ).get(field)
+        return keyring
 
-    def test_missing_values_name_the_fix(self):
-        with self.assertRaisesRegex(RuntimeError, r"token.*fastmail-sieve auth"):
-            check_credentials({**KEYCHAIN, "token": None})
+    def read(self, stored):
+        keyring = self.fake_keyring(stored)
+        with mock.patch.dict("sys.modules", {"keyring": keyring}):
+            return read_keychain(), keyring
 
-    def test_an_empty_value_counts_as_missing(self):
-        with self.assertRaisesRegex(RuntimeError, "cookie"):
-            check_credentials({**KEYCHAIN, "cookie": ""})
+    def test_the_tools_own_name_is_used(self):
+        self.assertEqual(KEYCHAIN_SERVICE, "fastmail-sieve")
 
-    def test_the_username_is_informational_and_not_required(self):
-        self.assertTrue(check_credentials({"token": "t", "cookie": "c"}))
+    def test_values_under_the_old_name_are_still_read(self):
+        found, _ = self.read({LEGACY_KEYCHAIN_SERVICE: KEYCHAIN})
+        self.assertEqual(found, KEYCHAIN)
+
+    def test_the_new_name_wins_over_the_old_one(self):
+        newer = {**KEYCHAIN, "token": "fma1-new"}
+        found, _ = self.read(
+            {KEYCHAIN_SERVICE: newer, LEGACY_KEYCHAIN_SERVICE: KEYCHAIN}
+        )
+        self.assertEqual(found["token"], "fma1-new")
+
+    def test_the_old_name_is_not_read_when_the_new_one_has_the_login(self):
+        _, keyring = self.read(
+            {KEYCHAIN_SERVICE: KEYCHAIN, LEGACY_KEYCHAIN_SERVICE: KEYCHAIN}
+        )
+        services = {call.args[0] for call in keyring.get_password.call_args_list}
+        self.assertEqual(services, {KEYCHAIN_SERVICE})
+
+    def test_new_logins_are_stored_under_the_new_name(self):
+        keyring = mock.Mock()
+        with mock.patch.dict("sys.modules", {"keyring": keyring}):
+            store_keychain("me", "t", "c")
+        services = {call.args[0] for call in keyring.set_password.call_args_list}
+        self.assertEqual(services, {KEYCHAIN_SERVICE})
 
 
 class GatherTest(unittest.TestCase):
