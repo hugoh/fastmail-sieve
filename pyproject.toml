@@ -23,8 +23,10 @@ classifiers = [
 ]
 dependencies = [
   "keyring>=25",
+  "requests>=2.32,<3",
   "rich>=14,<15",
   "sievelib>=1.6,<1.7",
+  "urllib3>=2.2,<3",
 ]
 dynamic = ["version"]
 
@@ -39,6 +41,7 @@ fmsieve = "fastmail_sieve.cli:main"
 
 [dependency-groups]
 dev = [
+  "responses>=0.25",
   "ruff>=0.17.5",
   "ty>=0.0.104",
 ]

@@ -1,10 +1,11 @@
-import io
 import json
+import threading
 import unittest
-import urllib.error
-import urllib.request
-from email.message import Message
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
+
+import requests
+import responses
 
 from fastmail_sieve.fastmail import jmap as jmap_module
 from fastmail_sieve.fastmail.jmap import SESSION_URL, invoke, jmap
@@ -60,65 +61,98 @@ class InvokeTest(unittest.TestCase):
             invoke(CREDS, ["urn:core"], "Thing/get", {}, call)
 
 
-class OpenerCase(unittest.TestCase):
-    def open_with(self, outcome):
-        patcher = mock.patch.object(jmap_module, "_opener")
-        opener = patcher.start()
-        self.addCleanup(patcher.stop)
-        if isinstance(outcome, Exception):
-            opener.open.side_effect = outcome
-        else:
-            response = mock.MagicMock()
-            body = (
-                outcome if isinstance(outcome, bytes) else json.dumps(outcome).encode()
-            )
-            response.__enter__.return_value = io.BytesIO(body)
-            opener.open.return_value = response
-        return opener.open
+API = "https://api.fastmail.com/x"
+READ = {"methodCalls": [["Thing/get", {}, "0"]]}
+WRITE = {"methodCalls": [["SieveBlocks/set", {}, "0"]]}
 
 
-class JmapTest(OpenerCase):
+class HttpCase(unittest.TestCase):
+    def setUp(self):
+        jmap_module._sessions.clear()
+        jmap_module._sessions_by_policy.clear()
+        self.addCleanup(jmap_module._sessions.clear)
+        self.addCleanup(jmap_module._sessions_by_policy.clear)
+        mocked = responses.RequestsMock(assert_all_requests_are_fired=False)
+        self.http = mocked
+        mocked.start()
+        self.addCleanup(mocked.stop)
+        self.addCleanup(mocked.reset)
+
+    def reply(self, body=None, status=200, **kwargs):
+        if isinstance(body, (dict, list)):
+            kwargs["json"] = body
+        elif body is not None:
+            kwargs["body"] = body
+        self.http.add(responses.POST, API, status=status, **kwargs)
+        self.http.add(responses.GET, API, status=status, **kwargs)
+
+
+class JmapTest(HttpCase):
     def test_sends_the_credentials_and_a_json_body(self):
-        urlopen = self.open_with({"ok": True})
-        self.assertEqual(
-            jmap("https://api.fastmail.com/x", CREDS, {"a": 1}), {"ok": True}
-        )
-        request = urlopen.call_args.args[0]
-        self.assertEqual(request.get_header("Authorization"), "Bearer fma1-secret")
-        self.assertEqual(request.get_header("Cookie"), "__Http-s_x=y")
-        self.assertEqual(request.get_header("Content-type"), "application/json")
-        self.assertEqual(json.loads(request.data), {"a": 1})
+        self.reply({"ok": True})
+        self.assertEqual(jmap(API, CREDS, {"a": 1}), {"ok": True})
+        request = self.http.calls[0].request
+        self.assertEqual(request.headers["Authorization"], "Bearer fma1-secret")
+        self.assertEqual(request.headers["Cookie"], "__Http-s_x=y")
+        self.assertEqual(request.headers["Content-Type"], "application/json")
+        self.assertEqual(json.loads(request.body), {"a": 1})
+
+    def test_it_says_who_it_is(self):
+        self.reply({"ok": True})
+        jmap(API, CREDS)
+        headers = self.http.calls[0].request.headers
+        self.assertRegex(headers["User-Agent"], r"^fastmail-sieve")
+        self.assertEqual(headers["Accept"], "application/json")
 
     def test_an_api_token_has_no_cookie_header(self):
-        urlopen = self.open_with({"ok": True})
-        jmap("https://api.fastmail.com/x", {"token": "api-1", "cookie": None})
-        request = urlopen.call_args.args[0]
-        self.assertEqual(request.get_header("Authorization"), "Bearer api-1")
-        self.assertFalse(request.has_header("Cookie"))
+        self.reply({"ok": True})
+        jmap(API, {"token": "api-1", "cookie": None})
+        headers = self.http.calls[0].request.headers
+        self.assertEqual(headers["Authorization"], "Bearer api-1")
+        self.assertNotIn("Cookie", headers)
 
     def test_a_get_has_no_body(self):
-        urlopen = self.open_with({"ok": True})
-        jmap("https://api.fastmail.com/x", CREDS)
-        self.assertIsNone(urlopen.call_args.args[0].data)
+        self.reply({"ok": True})
+        jmap(API, CREDS)
+        self.assertEqual(self.http.calls[0].request.method, "GET")
+        self.assertIsNone(self.http.calls[0].request.body)
+
+    def test_a_netrc_entry_never_replaces_the_token(self):
+        self.reply({"ok": True})
+        with mock.patch("requests.sessions.get_netrc_auth", return_value=("u", "p")):
+            jmap(API, CREDS)
+        self.assertEqual(
+            self.http.calls[0].request.headers["Authorization"], "Bearer fma1-secret"
+        )
 
     def test_an_expired_session_says_how_to_fix_it(self):
-        self.open_with(
-            urllib.error.HTTPError("u", 401, "Unauthorized", Message(), None)
-        )
+        self.reply(status=401)
         with self.assertRaisesRegex(RuntimeError, r"HTTP 401.*fastmail-sieve auth"):
-            jmap("https://api.fastmail.com/x", CREDS)
+            jmap(API, CREDS)
 
     def test_other_http_errors_are_reported_with_the_code(self):
-        self.open_with(
-            urllib.error.HTTPError("u", 500, "Server Error", Message(), None)
-        )
+        self.reply(status=500)
         with self.assertRaisesRegex(RuntimeError, "HTTP 500"):
-            jmap("https://api.fastmail.com/x", CREDS)
+            jmap(API, CREDS)
+
+    def test_a_problem_answer_says_what_fastmail_called_it(self):
+        self.reply(
+            {"type": "urn:ietf:params:jmap:error:limit", "detail": "too many"},
+            status=400,
+        )
+        with self.assertRaisesRegex(RuntimeError, r"HTTP 400.*error:limit: too many"):
+            jmap(API, CREDS)
 
     def test_network_failures_are_readable(self):
-        self.open_with(urllib.error.URLError("no route"))
+        self.reply(body=requests.exceptions.ConnectionError("no route"))
         with self.assertRaisesRegex(RuntimeError, "Could not reach Fastmail: no route"):
-            jmap("https://api.fastmail.com/x", CREDS)
+            jmap(API, CREDS)
+
+    def test_set_cookie_answers_are_not_kept_or_resent(self):
+        self.reply({"ok": True}, headers={"Set-Cookie": "x=1; Domain=fastmail.com"})
+        jmap(API, CREDS)
+        jmap(API, CREDS)
+        self.assertEqual(self.http.calls[1].request.headers["Cookie"], "__Http-s_x=y")
 
 
 SESSION = {
@@ -128,36 +162,29 @@ SESSION = {
 ANSWER = {"methodResponses": [["Thing/get", {"list": []}, "0"]]}
 
 
-class SessionCacheTest(OpenerCase):
-    def setUp(self):
-        jmap_module._sessions.clear()
-        self.addCleanup(jmap_module._sessions.clear)
-
+class SessionCacheTest(HttpCase):
     def answers(self, *bodies):
         pending = list(bodies)
-        opener = self.open_with({})
 
-        def respond(request, timeout=None):
-            handle = mock.MagicMock()
-            handle.__enter__.return_value = io.BytesIO(
-                json.dumps(pending.pop(0)).encode()
-            )
-            return handle
+        def respond(request):
+            return (200, {}, json.dumps(pending.pop(0)))
 
-        opener.side_effect = respond
-        return opener
+        self.http.add_callback(responses.GET, SESSION_URL, callback=respond)
+        self.http.add_callback(
+            responses.POST, "https://api.fastmail.com/jmap/api/", callback=respond
+        )
 
     def test_the_session_is_fetched_once_for_several_calls(self):
-        opener = self.answers(SESSION, ANSWER, ANSWER, ANSWER)
+        self.answers(SESSION, ANSWER, ANSWER, ANSWER)
         for _ in range(3):
             invoke(CREDS, ["urn:core"], "Thing/get", {})
-        self.assertEqual(opener.call_count, 4)  # one session and three calls
+        self.assertEqual(len(self.http.calls), 4)  # one session and three calls
 
     def test_each_login_gets_its_own_session(self):
-        opener = self.answers(SESSION, ANSWER, SESSION, ANSWER)
+        self.answers(SESSION, ANSWER, SESSION, ANSWER)
         invoke(CREDS, ["urn:core"], "Thing/get", {})
         invoke({"token": "another", "cookie": None}, ["urn:core"], "Thing/get", {})
-        self.assertEqual(opener.call_count, 4)
+        self.assertEqual(len(self.http.calls), 4)
 
     def test_a_fake_call_is_never_cached(self):
         calls = []
@@ -171,34 +198,30 @@ class SessionCacheTest(OpenerCase):
         self.assertEqual(calls.count(True), 2)
 
 
-class UnreadableAnswerTest(OpenerCase):
+class UnreadableAnswerTest(HttpCase):
     """Whatever goes wrong on the wire is one readable line, never a traceback."""
 
     def failure(self):
         with self.assertRaises(RuntimeError) as raised:
-            jmap("https://api.fastmail.com/x", CREDS)
+            jmap(API, CREDS)
         return str(raised.exception)
 
     def test_an_html_page_with_http_200_is_explained(self):
-        self.open_with(b"<html>please sign in</html>")
+        self.reply("<html>please sign in</html>")
         self.assertRegex(self.failure(), "did not answer with JSON.*proxy")
 
-    def test_a_timeout_on_connect_names_the_limit(self):
-        self.open_with(TimeoutError("timed out"))
-        self.assertRegex(self.failure(), "did not answer within 30 seconds")
-
-    def test_a_timeout_while_reading_the_body_names_the_limit(self):
-        class Stalls(io.BytesIO):
-            def read(self, *args):
-                raise TimeoutError("timed out")
-
-        opener = self.open_with({})
-        opener.return_value.__enter__.return_value = Stalls()
+    def test_a_timeout_names_the_limit(self):
+        self.reply(body=requests.exceptions.ReadTimeout("timed out"))
         self.assertRegex(self.failure(), "did not answer within 30 seconds")
 
     def test_a_dropped_connection_is_reported(self):
-        self.open_with(ConnectionResetError("reset by peer"))
+        self.reply(body=requests.exceptions.ConnectionError("reset by peer"))
         self.assertRegex(self.failure(), "Could not reach Fastmail: .*reset by peer")
+
+    def test_a_huge_answer_is_not_read(self):
+        with mock.patch.object(jmap_module, "MAX_RESPONSE_BYTES", 10):
+            self.reply('{"a": "' + "x" * 100 + '"}')
+            self.assertRegex(self.failure(), "larger than expected")
 
 
 class InvokeShapeTest(unittest.TestCase):
@@ -234,17 +257,17 @@ class InvokeShapeTest(unittest.TestCase):
                 )
 
 
-class UrlGuardTest(OpenerCase):
+class UrlGuardTest(HttpCase):
     """The token and cookie are a full web session: they go only to fastmail.com over https."""
 
     def refused(self, url, pattern):
-        opened = self.open_with({"ok": True})
+        self.http.add(responses.GET, url, json={"ok": True})
         with self.assertRaises(RuntimeError) as raised:
             jmap(url, CREDS)
         self.assertRegex(str(raised.exception), pattern)
         self.assertNotIn("fma1-secret", str(raised.exception))
         self.assertNotIn("Http-s_", str(raised.exception))
-        opened.assert_not_called()
+        self.assertEqual(len(self.http.calls), 0)
 
     def test_plain_http_is_refused(self):
         self.refused("http://api.fastmail.com/jmap/session", "https")
@@ -266,33 +289,170 @@ class UrlGuardTest(OpenerCase):
             "https://API.FASTMAIL.COM/x",
         ):
             with self.subTest(url=url):
-                opened = self.open_with({"ok": True})
+                self.http.add(responses.GET, url, json={"ok": True})
                 self.assertEqual(jmap(url, CREDS), {"ok": True})
-                opened.assert_called_once()
 
-    def test_redirects_are_never_followed(self):
-        handler = jmap_module._NoRedirect()
-        request = urllib.request.Request("https://api.fastmail.com/x")
-        self.assertIsNone(
-            handler.redirect_request(
-                request, None, 302, "Found", {}, "https://evil.example/"
-            )
-        )
-
-    def test_a_redirect_answer_is_reported_as_refused(self):
-        self.open_with(urllib.error.HTTPError("u", 302, "Found", Message(), None))
+    def test_a_redirect_is_not_followed_and_is_reported_as_refused(self):
+        self.reply(status=302, headers={"Location": "https://evil.example/"})
         with self.assertRaisesRegex(RuntimeError, "redirect.*refused"):
-            jmap("https://api.fastmail.com/x", CREDS)
+            jmap(API, CREDS)
+        self.assertEqual(len(self.http.calls), 1)
 
     def test_a_foreign_api_url_in_the_session_never_receives_the_login(self):
         session = {
             "apiUrl": "https://evil.example/api",
             "primaryAccounts": {MAIL: "u1"},
         }
-        opened = self.open_with(session)
+        self.http.add(responses.GET, SESSION_URL, json=session)
         with self.assertRaisesRegex(RuntimeError, "evil.example"):
             invoke(CREDS, ["urn:core"], "Thing/get", {})
-        self.assertEqual(opened.call_count, 1)
+        self.assertEqual(len(self.http.calls), 1)
+
+
+class ReadOnlyTest(unittest.TestCase):
+    def test_gets_and_reading_methods_can_be_repeated(self):
+        self.assertTrue(jmap_module.is_read_only(None))
+        for name in ("SieveBlocks/get", "Mailbox/get", "Validate/sieve", "X/query"):
+            with self.subTest(name=name):
+                self.assertTrue(
+                    jmap_module.is_read_only({"methodCalls": [[name, {}, "0"]]})
+                )
+
+    def test_writes_and_the_unknown_are_never_repeated(self):
+        for body in (
+            {"methodCalls": [["SieveBlocks/set", {}, "0"]]},
+            {"methodCalls": [["Mailbox/get", {}, "0"], ["X/set", {}, "1"]]},
+            {"methodCalls": []},
+            {},
+            "nonsense",
+        ):
+            with self.subTest(body=body):
+                self.assertFalse(jmap_module.is_read_only(body))
+
+
+class Scripted(BaseHTTPRequestHandler):
+    def _answer(self):
+        server = self.server
+        length = int(self.headers.get("Content-Length") or 0)
+        server.seen.append((self.command, self.rfile.read(length)))
+        status, headers, body = server.script.pop(0)
+        if status is None:  # drop the connection without answering
+            self.connection.close()
+            return
+        self.send_response(status)
+        for name, value in headers.items():
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    do_GET = do_POST = _answer
+
+    def log_message(self, *args):
+        pass
+
+
+class RetryTest(unittest.TestCase):
+    """The real urllib3 retry machinery against a local server (http only here;
+    `_check_url` is bypassed because the guard itself is tested above)."""
+
+    def setUp(self):
+        jmap_module._sessions_by_policy.clear()
+        self.addCleanup(jmap_module._sessions_by_policy.clear)
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Scripted)
+        self.server.seen, self.server.script = [], []
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.url = f"http://127.0.0.1:{self.server.server_port}/x"
+        patcher = mock.patch.object(jmap_module, "_check_url")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        sleeper = mock.patch("urllib3.util.retry.time.sleep")
+        self.sleep = sleeper.start()
+        self.addCleanup(sleeper.stop)
+
+    def script(self, *steps):
+        self.server.script[:] = [
+            (
+                status,
+                headers or {},
+                json.dumps(body).encode() if body is not None else b"",
+            )
+            for status, headers, body in steps
+        ]
+
+    def call(self, body):
+        for read_only in (True, False):
+            session = jmap_module._http(read_only)
+            session.mount(
+                "http://",
+                jmap_module.HTTPAdapter(max_retries=jmap_module._policy(read_only)),
+            )
+        return jmap(self.url, CREDS, body)
+
+    def test_a_busy_server_is_retried_and_its_retry_after_is_obeyed(self):
+        self.script(
+            (503, {"Retry-After": "7"}, None),
+            (429, {"Retry-After": "2"}, None),
+            (200, None, {"ok": True}),
+        )
+        self.assertEqual(self.call(READ), {"ok": True})
+        self.assertEqual(len(self.server.seen), 3)
+        self.assertEqual([c.args[0] for c in self.sleep.call_args_list], [7, 2])
+
+    def test_a_retry_after_cannot_make_us_wait_for_ever(self):
+        policy = jmap_module._policy(True)
+        response = mock.Mock(headers={"Retry-After": "86400"})
+        self.assertEqual(
+            policy.get_retry_after(response), jmap_module.MAX_RETRY_AFTER_SECONDS
+        )
+
+    def test_backoff_grows_and_is_never_zero_between_attempts(self):
+        policy = jmap_module._policy(True)
+        waits = []
+        for tries in (1, 2, 3, 4, 9):
+            policy.history = (object(),) * tries
+            waits.append(policy.get_backoff_time())
+        self.assertTrue(all(w > 0 for w in waits))
+        self.assertLessEqual(waits[0], 1.0)
+        self.assertLessEqual(waits[1], 2.0)
+        self.assertLessEqual(waits[-1], jmap_module.MAX_BACKOFF_SECONDS)
+
+    def test_a_read_gives_up_after_the_limit_and_says_the_server_is_busy(self):
+        self.script(*[(503, None, None)] * 10)
+        with self.assertRaisesRegex(RuntimeError, "HTTP 503.*still busy"):
+            self.call(READ)
+        self.assertEqual(len(self.server.seen), 1 + jmap_module.MAX_RETRIES)
+
+    def test_a_client_error_is_not_retried(self):
+        self.script((400, None, {"type": "x"}), (200, None, {"ok": True}))
+        with self.assertRaisesRegex(RuntimeError, "HTTP 400"):
+            self.call(READ)
+        self.assertEqual(len(self.server.seen), 1)
+
+    def test_a_read_is_retried_after_a_dropped_connection(self):
+        self.script((None, None, None), (200, None, {"ok": True}))
+        self.assertEqual(self.call(READ), {"ok": True})
+        self.assertEqual(len(self.server.seen), 2)
+        self.assertGreater(self.sleep.call_args.args[0], 0)
+
+    def test_a_write_is_retried_on_429_only(self):
+        self.script((429, {"Retry-After": "1"}, None), (200, None, {"ok": True}))
+        self.assertEqual(self.call(WRITE), {"ok": True})
+        self.assertEqual(len(self.server.seen), 2)
+
+    def test_a_write_is_not_retried_on_503(self):
+        self.script((503, None, None), (200, None, {"ok": True}))
+        with self.assertRaisesRegex(RuntimeError, "HTTP 503"):
+            self.call(WRITE)
+        self.assertEqual(len(self.server.seen), 1)
+
+    def test_a_write_is_not_repeated_when_the_answer_is_lost(self):
+        self.script((None, None, None), (200, None, {"ok": True}))
+        with self.assertRaisesRegex(RuntimeError, "Could not reach Fastmail"):
+            self.call(WRITE)
+        self.assertEqual(len(self.server.seen), 1)
 
 
 if __name__ == "__main__":
