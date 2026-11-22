@@ -1,16 +1,17 @@
-from fastmail_sieve.commands._options import progress_console
+import click
+
+from fastmail_sieve.commands._options import invoke, progress_console
 from fastmail_sieve.fastmail.credentials import load_credentials
 from fastmail_sieve.fastmail.mailboxes import fetch_mailboxes, render
 
 
-def add_parser(subparsers):
-    parser = subparsers.add_parser(
-        "folders", help="list Fastmail folders and their ids"
-    )
-    parser.add_argument(
-        "filter", nargs="?", help="only folders whose path contains this text"
-    )
-    parser.set_defaults(run=run)
+@click.command("folders", short_help="list Fastmail folders and their ids")
+@click.argument("filter", required=False)
+@click.pass_context
+def command(ctx, **options):
+    """List Fastmail folders and their ids. FILTER limits them to folders whose
+    path contains that text."""
+    invoke(ctx, run, options)
 
 
 def run(args, project):

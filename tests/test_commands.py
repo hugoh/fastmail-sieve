@@ -436,9 +436,9 @@ class ExplainCommandTest(Project):
         self.assertIn("nope.sieve", err)
 
     def test_an_unknown_topic_is_a_usage_error(self):
-        with self.assertRaises(SystemExit) as raised:
-            self.explain("nope")
-        self.assertEqual(raised.exception.code, 2)
+        code, out, err = self.explain("nope")
+        self.assertEqual(code, 2)
+        self.assertIn("nope", err)
 
 
 class ExplainVariablesTest(Project):

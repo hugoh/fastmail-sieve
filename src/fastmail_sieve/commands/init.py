@@ -1,31 +1,35 @@
-from fastmail_sieve.commands._options import confirm
+import click
+
+from fastmail_sieve.commands._options import confirm, invoke
 from fastmail_sieve.fastmail.blocks import CHANGED, get_script, set_blocks
 from fastmail_sieve.fastmail.credentials import LazySources, pick
 from fastmail_sieve.project import scaffold
 
 
-def add_parser(subparsers):
-    parser = subparsers.add_parser(
-        "init",
-        help="create the rules/ fragments and variables.toml; --remote also prepares Fastmail",
-    )
-    parser.add_argument(
-        "--remote",
-        action="store_true",
-        help="also add the managed blocks to Fastmail's script if it has none yet "
-        "(a one-time write; existing code is kept)",
-    )
-    parser.add_argument(
-        "--convert-markers",
-        action="store_true",
-        help="with --remote, also replace Fastmail-Sieve-Sync's marker comments "
-        "around your blocks with this tool's own (one way: Sieve-Sync no longer "
-        "recognises the blocks afterwards; your rules are untouched)",
-    )
-    parser.add_argument(
-        "--yes", action="store_true", help="with --remote, do not ask first"
-    )
-    parser.set_defaults(run=run)
+@click.command(
+    "init",
+    short_help="create the rules/ fragments and variables.toml; --remote also "
+    "prepares Fastmail",
+)
+@click.option(
+    "--remote",
+    is_flag=True,
+    help="also add the managed blocks to Fastmail's script if it has none yet "
+    "(a one-time write; existing code is kept)",
+)
+@click.option(
+    "--convert-markers",
+    is_flag=True,
+    help="with --remote, also replace Fastmail-Sieve-Sync's marker comments "
+    "around your blocks with this tool's own (one way: Sieve-Sync no longer "
+    "recognises the blocks afterwards; your rules are untouched)",
+)
+@click.option("--yes", is_flag=True, help="with --remote, do not ask first")
+@click.pass_context
+def command(ctx, **options):
+    """Create the rules/ fragments and variables.toml; --remote also prepares
+    Fastmail."""
+    invoke(ctx, run, options)
 
 
 def _ensure_unchanged(credentials, script):

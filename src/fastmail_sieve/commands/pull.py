@@ -1,20 +1,23 @@
-from fastmail_sieve.commands._options import confirm, progress_console
+import click
+
+from fastmail_sieve.commands._options import confirm, invoke, progress_console
 from fastmail_sieve.fastmail.blocks import NO_BLOCKS
 from fastmail_sieve.project import FRAGMENT_HEADERS
 from fastmail_sieve.remote import load_remote
 from fastmail_sieve.sieve.script import split
 
 
-def add_parser(subparsers):
-    parser = subparsers.add_parser(
-        "pull",
-        help="overwrite the rules/ fragments with Fastmail's managed blocks "
-        "(asks first when that would replace local changes)",
-    )
-    parser.add_argument(
-        "--yes", action="store_true", help="replace local changes without asking"
-    )
-    parser.set_defaults(run=run)
+@click.command(
+    "pull",
+    short_help="overwrite the rules/ fragments with Fastmail's managed blocks "
+    "(asks first when that would replace local changes)",
+)
+@click.option("--yes", is_flag=True, help="replace local changes without asking")
+@click.pass_context
+def command(ctx, **options):
+    """Overwrite the rules/ fragments with Fastmail's managed blocks. It asks
+    first when that would replace local changes."""
+    invoke(ctx, run, options)
 
 
 def _local_changes(project, blocks):

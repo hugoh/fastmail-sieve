@@ -1,23 +1,22 @@
+import click
 from rich.console import Console
 
-from fastmail_sieve.commands._options import confirm
+from fastmail_sieve.commands._options import confirm, invoke
 from fastmail_sieve.commands.diff import unified
 from fastmail_sieve.steps import Session, lint_steps, run_steps, write_steps
 from fastmail_sieve.ui.tables import safe_text
 
 
-def add_parser(subparsers):
-    parser = subparsers.add_parser(
-        "push",
-        help="check everything, show what changes, then push your rules to Fastmail",
-    )
-    parser.add_argument(
-        "--yes", action="store_true", help="push without asking for confirmation"
-    )
-    parser.add_argument(
-        "--strict", action="store_true", help="do not push while there are warnings"
-    )
-    parser.set_defaults(run=run)
+@click.command(
+    "push",
+    short_help="check everything, show what changes, then push your rules to Fastmail",
+)
+@click.option("--yes", is_flag=True, help="push without asking for confirmation")
+@click.option("--strict", is_flag=True, help="do not push while there are warnings")
+@click.pass_context
+def command(ctx, **options):
+    """Check everything, show what changes, then push your rules to Fastmail."""
+    invoke(ctx, run, options)
 
 
 def _show(lines, console):

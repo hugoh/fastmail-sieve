@@ -133,9 +133,10 @@ class AuthCommandTest(unittest.TestCase):
         self.assertIn("no usable keychain", output)
 
     def test_there_is_no_discover_option(self):
-        with self.assertRaises(SystemExit) as raised:
-            self.run_auth("--discover", prompts=[TOKEN])
-        self.assertEqual(raised.exception.code, 2)
+        code, output, _, store = self.run_auth("--discover", prompts=[TOKEN])
+        self.assertEqual(code, 2)
+        self.assertIn("--discover", output)
+        store.assert_not_called()
 
 
 if __name__ == "__main__":

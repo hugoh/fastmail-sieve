@@ -1,18 +1,15 @@
-import argparse
 import re
 import unittest
 from pathlib import Path
 
-from fastmail_sieve.cli import build_parser
+from fastmail_sieve.cli import cli
 
 ROOT = Path(__file__).resolve().parent.parent
 MENTION = re.compile(r"(?:`|\brun |^)fastmail-sieve ([a-z][a-z-]*)", re.MULTILINE)
 
 
 def real_commands():
-    parser = build_parser()
-    actions = [a for a in parser._actions if isinstance(a, argparse._SubParsersAction)]
-    return set(actions[0].choices)
+    return set(cli.commands)
 
 
 def mentions(path):

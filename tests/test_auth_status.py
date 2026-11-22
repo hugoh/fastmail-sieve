@@ -5,7 +5,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-from fastmail_sieve.cli import build_parser, main
+from fastmail_sieve.cli import main
 from fastmail_sieve.fastmail.credentials import SourceStatus, inspect_sources
 
 SECRETS = ("fma1-SECRETTOKEN", "__Http-s_SECRETCOOKIE=1", "SECRETAPITOKEN")
@@ -199,10 +199,28 @@ def run_status(statuses):
 
 class StatusCommandTest(unittest.TestCase):
     def test_it_is_a_subcommand_and_plain_auth_is_unchanged(self):
-        parser = build_parser()
-        self.assertTrue(parser.parse_args(["auth", "--stdin"]).stdin)
-        self.assertEqual(parser.parse_args(["auth", "status"]).auth_command, "status")
-        self.assertIsNone(parser.parse_args(["auth"]).auth_command)
+        with (
+            mock.patch("fastmail_sieve.commands.auth.run", return_value=0) as store,
+            mock.patch(
+                "fastmail_sieve.commands.auth.run_status", return_value=0
+            ) as status,
+            mock.patch(
+                "fastmail_sieve.commands.auth.run_clear", return_value=0
+            ) as clear,
+            mock.patch("fastmail_sieve.cli.find_project"),
+        ):
+            main(["auth", "--stdin"])
+            self.assertTrue(store.call_args.args[0].stdin)
+            main(["auth"])
+            self.assertFalse(store.call_args.args[0].stdin)
+            self.assertEqual(store.call_count, 2)
+            status.assert_not_called()
+            main(["auth", "status"])
+            status.assert_called_once()
+            self.assertEqual(store.call_count, 2)
+            main(["auth", "clear"])
+            clear.assert_called_once()
+            self.assertEqual(store.call_count, 2)
 
     def test_it_lists_every_source_in_order_with_its_state(self):
         _, output = run_status(KEYCHAIN_ONLY)

@@ -1,15 +1,19 @@
+import click
 from rich.console import Console
 
+from fastmail_sieve.commands._options import invoke
 from fastmail_sieve.doctor import Doctor, doctor_steps
 from fastmail_sieve.steps import run_steps
 
 
-def add_parser(subparsers):
-    parser = subparsers.add_parser(
-        "doctor",
-        help="check the project files, the credentials and what Fastmail lets them do",
-    )
-    parser.set_defaults(run=run)
+@click.command(
+    "doctor",
+    short_help="check the project files, the credentials and what Fastmail lets them do",
+)
+@click.pass_context
+def command(ctx):
+    """Check the project files, the credentials and what Fastmail lets them do."""
+    invoke(ctx, run, {})
 
 
 def run(args, project):

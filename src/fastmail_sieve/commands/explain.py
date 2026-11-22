@@ -1,9 +1,12 @@
 import sys
 
+import click
+
 from fastmail_sieve.commands._options import (
-    add_color,
-    add_from_file,
-    add_live,
+    color_option,
+    from_file_option,
+    invoke,
+    live_option,
     progress_console,
 )
 from fastmail_sieve.remote import load_assembled, load_remote
@@ -21,23 +24,22 @@ from fastmail_sieve.ui.tables import terminal_width, use_color
 TOPICS = ("rules", "script", "variables")
 
 
-def add_parser(subparsers):
-    parser = subparsers.add_parser(
-        "explain",
-        help="explain your rules, the whole script or its variables in plain language",
-        description="Explain the script in plain language: your rules and your "
-        "Fastmail UI rules (rules, the default), the whole script in execution "
-        "order with Fastmail's own rules dimmed (script), or the variables and "
-        "where they are set and read (variables).",
-    )
-    parser.add_argument(
-        "topic", nargs="?", choices=TOPICS, default="rules", help="what to explain"
-    )
-    parser.add_argument("--width", type=int, help="table width in columns")
-    add_color(parser)
-    add_live(parser, "explain")
-    add_from_file(parser)
-    parser.set_defaults(run=run)
+@click.command(
+    "explain",
+    short_help="explain your rules, the whole script or its variables in plain language",
+)
+@click.argument("topic", type=click.Choice(TOPICS), default="rules", required=False)
+@click.option("--width", type=int, help="table width in columns")
+@color_option
+@live_option("explain")
+@from_file_option()
+@click.pass_context
+def command(ctx, **options):
+    """Explain the script in plain language: your rules and your Fastmail UI rules
+    (rules, the default), the whole script in execution order with Fastmail's own
+    rules dimmed (script), or the variables and where they are set and read
+    (variables)."""
+    invoke(ctx, run, options)
 
 
 def run(args, project):

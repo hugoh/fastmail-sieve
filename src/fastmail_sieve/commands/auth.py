@@ -2,7 +2,9 @@ import getpass
 import os
 import sys
 
-from fastmail_sieve.commands._options import progress_console
+import click
+
+from fastmail_sieve.commands._options import invoke, progress_console
 from fastmail_sieve.fastmail.auth_input import parse_curl, validate_token
 from fastmail_sieve.fastmail.credentials import (
     ENV_COOKIE,
@@ -17,40 +19,46 @@ from fastmail_sieve.fastmail.credentials import (
 from fastmail_sieve.fastmail.jmap import SESSION_URL, jmap
 
 
-def add_parser(subparsers):
-    parser = subparsers.add_parser(
-        "auth",
-        help="check the Fastmail token and cookie and store them in the keychain",
-        description="Store the browser session token (fma1-…) and cookie in the keychain. "
-        "They are a full web session: treat them like a password. By default you are "
-        "prompted for both with hidden input.",
-    )
-    parser.add_argument(
-        "--stdin",
-        action="store_true",
-        help="read a pasted 'Copy as cURL' command from standard input, "
-        "for example `pbpaste | fastmail-sieve auth --stdin`",
-    )
-    parser.set_defaults(run=run)
-    actions = parser.add_subparsers(dest="auth_command", metavar="[status]")
-    status = actions.add_parser(
-        "status",
-        help="show which credentials are available and where each comes from",
-        description="Show each credential source in the order it is tried, what it "
-        "provides, and which credentials each kind of command would use. Values "
-        "are never shown. Nothing is sent to Fastmail: run `doctor` to check "
-        "that they work.",
-    )
-    status.set_defaults(run=run_status)
-    clear = actions.add_parser(
-        "clear",
-        help="remove the stored credentials from the keychain",
-        description="Delete the token, cookie and username that `auth` stored in "
-        "the keychain. Credentials in environment variables or from a credential "
-        "command are not touched. Log out of Fastmail's web session as well if "
-        "you want the token itself revoked.",
-    )
-    clear.set_defaults(run=run_clear)
+@click.group(
+    "auth",
+    invoke_without_command=True,
+    short_help="check the Fastmail token and cookie and store them in the keychain",
+)
+@click.option(
+    "--stdin",
+    is_flag=True,
+    help="read a pasted 'Copy as cURL' command from standard input, "
+    "for example `pbpaste | fastmail-sieve auth --stdin`",
+)
+@click.pass_context
+def command(ctx, stdin):
+    """Store the browser session token (fma1-…) and cookie in the keychain. They
+    are a full web session: treat them like a password. By default you are
+    prompted for both with hidden input."""
+    if ctx.invoked_subcommand is None:
+        invoke(ctx, run, {"stdin": stdin})
+
+
+@command.command(
+    "status",
+    short_help="show which credentials are available and where each comes from",
+)
+@click.pass_context
+def status_command(ctx):
+    """Show each credential source in the order it is tried, what it provides,
+    and which credentials each kind of command would use. Values are never
+    shown. Nothing is sent to Fastmail: run `doctor` to check that they work."""
+    invoke(ctx, run_status, {})
+
+
+@command.command("clear", short_help="remove the stored credentials from the keychain")
+@click.pass_context
+def clear_command(ctx):
+    """Delete the token, cookie and username that `auth` stored in the keychain.
+    Credentials in environment variables or from a credential command are not
+    touched. Log out of Fastmail's web session as well if you want the token
+    itself revoked."""
+    invoke(ctx, run_clear, {})
 
 
 def _username(token, cookie):
