@@ -25,6 +25,10 @@ class PathsTest(unittest.TestCase):
             ["finance", "finance.taxes", "Inbox", "Inbox.Shopping"],
         )
 
+    def test_render_never_passes_terminal_control_characters_on(self):
+        boxes = [{"id": "P1", "name": "evil\x1b[2Jname", "parentId": None}]
+        self.assertNotIn("\x1b", "".join(render(boxes)))
+
     def test_render_filters_and_shows_role(self):
         self.assertEqual(len(render(BOXES, "TAX")), 1)
         self.assertIn("[inbox]", render(BOXES)[2])

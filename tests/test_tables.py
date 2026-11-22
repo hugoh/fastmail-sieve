@@ -8,6 +8,7 @@ from rich.text import Text
 from fastmail_sieve.ui.tables import (
     cell,
     render_table,
+    safe_text,
     strip_variation_selectors,
     terminal_width,
     use_color,
@@ -40,6 +41,22 @@ class VariationSelectorTest(unittest.TestCase):
     def test_cell_strips_and_styles(self):
         text = cell("x\ufe0fy", "bold")
         self.assertEqual((text.plain, str(text.style)), ("xy", "bold"))
+
+
+class SafeTextTest(unittest.TestCase):
+    """Text from Fastmail is shown on a terminal: it must not be able to drive it."""
+
+    def test_escape_sequences_and_other_control_characters_are_removed(self):
+        self.assertEqual(safe_text("a\x1b[31mb\x07\x08c\x00d\x7fe\x9bf"), "a[31mbcdef")
+
+    def test_newlines_and_tabs_survive(self):
+        self.assertEqual(safe_text("a\n\tb\r\n"), "a\n\tb\n")
+
+    def test_the_variation_selector_goes_too(self):
+        self.assertEqual(safe_text("⌨\ufe0f"), "⌨")
+
+    def test_a_cell_is_safe(self):
+        self.assertEqual(cell("x\x1b]0;title\x07y").plain, "x]0;titley")
 
 
 class UseColorTest(unittest.TestCase):

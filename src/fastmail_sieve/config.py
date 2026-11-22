@@ -1,5 +1,8 @@
+import os
+import stat
 import tomllib
 from dataclasses import dataclass
+from pathlib import Path, PurePath
 
 CONFIG_FILE = "fastmail-sieve.toml"
 FRAGMENT_NAMES = ("top", "middle", "bottom")
@@ -28,15 +31,44 @@ def use(config):
     _current = config
 
 
+def _trusted(directory):
+    """Whether this user controls the directory: someone else's, or a world-writable
+    one such as /tmp, could plant rules that a push would send to your account."""
+    if not hasattr(os, "getuid"):
+        return True
+    info = directory.stat()
+    return info.st_uid == os.getuid() and not info.st_mode & stat.S_IWOTH
+
+
 def find_root(start):
-    """The nearest directory, from `start` upwards, that has a config file or a rules fragment."""
+    """The nearest directory, from `start` upwards, that has a config file or a
+    rules fragment. `start` is the user's own choice; a parent must be trusted."""
     fragments = Config().fragment_files
     for directory in (start, *start.parents):
+        if directory != start and not _trusted(directory):
+            continue
         if (directory / CONFIG_FILE).is_file() or any(
             (directory / name).is_file() for name in fragments
         ):
             return directory
     return None
+
+
+def _inside(root, key, value):
+    """A path from the config file, which a cloned repository controls: it must be
+    relative and stay inside the project, so a command cannot write elsewhere."""
+    path = PurePath(value)
+    inside = (
+        value
+        and not path.is_absolute()
+        and ".." not in path.parts
+        and (Path(root) / path).resolve().is_relative_to(Path(root).resolve())
+    )
+    if not inside:
+        raise RuntimeError(
+            f"{CONFIG_FILE}: {key} must be a relative path inside the project"
+        )
+    return value
 
 
 def load_config(root):
@@ -57,6 +89,10 @@ def load_config(root):
             raise RuntimeError(f"{CONFIG_FILE}: {key} must be a string")
     defaults = Config()
     return Config(
-        rules_dir=data.get("rules-dir", defaults.rules_dir),
-        variables_file=data.get("variables-file", defaults.variables_file),
+        rules_dir=_inside(root, "rules-dir", data.get("rules-dir", defaults.rules_dir)),
+        variables_file=_inside(
+            root,
+            "variables-file",
+            data.get("variables-file", defaults.variables_file),
+        ),
     )

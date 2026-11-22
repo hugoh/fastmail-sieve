@@ -2,7 +2,7 @@ import re
 
 from fastmail_sieve.fastmail.jmap import MAIL, invoke, jmap
 from fastmail_sieve.sieve.format import canonical_inbox, sieve_folder_name
-from fastmail_sieve.ui.tables import strip_variation_selectors
+from fastmail_sieve.ui.tables import safe_text, strip_variation_selectors
 
 USING = ["urn:ietf:params:jmap:core", MAIL]
 REFERENCE = re.compile(
@@ -107,6 +107,6 @@ def render(mailboxes, needle=None):
     for box in with_paths(mailboxes):
         if needle and needle.lower() not in box["path"].lower():
             continue
-        role = f"  [{box['role']}]" if box.get("role") else ""
-        lines.append(f"{box['id']:<10} {strip_variation_selectors(box['path'])}{role}")
+        role = f"  [{safe_text(box['role'])}]" if box.get("role") else ""
+        lines.append(f"{safe_text(box['id']):<10} {safe_text(box['path'])}{role}")
     return lines

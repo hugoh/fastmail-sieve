@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import shutil
 
 from rich.console import Console
@@ -18,8 +19,20 @@ def strip_variation_selectors(text):
     return text.replace(VARIATION_SELECTOR, "")
 
 
+# Everything that can move the cursor, retitle the window or otherwise drive a
+# terminal (C0 and C1 controls, DEL), except the newline and tab that layout needs.
+CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def safe_text(text):
+    """Text from Fastmail, made safe to print: no control characters, no
+    variation selectors. A carriage return counts as a control character, so
+    CRLF becomes LF."""
+    return CONTROL_CHARACTERS.sub("", strip_variation_selectors(text))
+
+
 def cell(text, style=""):
-    return Text(strip_variation_selectors(text), style=style)
+    return Text(safe_text(text), style=style)
 
 
 def render_table(table, width, color):

@@ -1,4 +1,5 @@
 import argparse
+import http.client
 import os
 import sys
 from importlib.metadata import PackageNotFoundError, version
@@ -97,7 +98,7 @@ def main(argv=None):
     try:
         enter_project(args)
         return args.run(args)
-    except (RuntimeError, OSError, ValueError) as error:
+    except (RuntimeError, OSError, ValueError, http.client.HTTPException) as error:
         print(f"✗ {error}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

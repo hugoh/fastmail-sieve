@@ -65,6 +65,13 @@ uvx fastmail-sieve --help               # or run it without installing
 
 Python 3.11 or newer. The command is also installed as `fmsieve`.
 
+HTTPS requests verify certificates against the `certifi` bundle, not the
+operating system's store. Behind a proxy that re-signs TLS, point
+`REQUESTS_CA_BUNDLE` (or `SSL_CERT_FILE`) at your organisation's CA file.
+Reads are retried with backoff when Fastmail is busy or unreachable, and
+`Retry-After` is honoured; a write is retried only when it provably did not
+happen.
+
 ## Quick start
 
 ```sh
@@ -184,9 +191,11 @@ Fastmail advertises an official Sieve API, and says what to fix.
 overwrites a file. Run `fastmail-sieve init --remote` once to add the three
 managed blocks to Fastmail's script if it has none yet (a one-time write that
 keeps any code already there), then `fastmail-sieve pull`. Commands find the
-project from any subdirectory, or use `-C DIR`. An optional
+project from any subdirectory, or use `-C DIR`; a parent directory is only
+used if you own it and it is not world-writable (so a shared `/tmp` can never
+supply rules), otherwise run from the project itself or use `-C`. An optional
 `fastmail-sieve.toml` in the project root can set `rules-dir` and
-`variables-file`.
+`variables-file`; both must be relative paths that stay inside the project.
 
 ## Reading `explain`
 

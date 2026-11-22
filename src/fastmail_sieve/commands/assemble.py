@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastmail_sieve.commands._options import add_from_file, progress_console
 from fastmail_sieve.remote import load_assembled
+from fastmail_sieve.ui.tables import safe_text
 
 
 def add_parser(subparsers):
@@ -23,5 +24,7 @@ def run(args):
     if args.output:
         Path(args.output).write_text(text, encoding="utf-8")
     else:
-        sys.stdout.write(text)
+        # Piped output is the script byte for byte; on a terminal it must not be
+        # able to drive it.
+        sys.stdout.write(safe_text(text) if sys.stdout.isatty() else text)
     return 0

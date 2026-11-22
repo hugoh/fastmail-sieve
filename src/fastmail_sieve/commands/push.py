@@ -3,6 +3,7 @@ from rich.console import Console
 from fastmail_sieve.commands._options import confirm
 from fastmail_sieve.commands.diff import unified
 from fastmail_sieve.steps import Session, lint_steps, run_steps, write_steps
+from fastmail_sieve.ui.tables import safe_text
 
 
 def add_parser(subparsers):
@@ -28,7 +29,7 @@ def _show(lines, console):
                 "red" if line.startswith("-") and not line.startswith("---") else "dim"
             )
         )
-        console.print(line, style=style, markup=False)
+        console.print(safe_text(line), style=style, markup=False)
 
 
 def run(args):

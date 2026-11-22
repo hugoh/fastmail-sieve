@@ -43,7 +43,13 @@ def add_parser(subparsers):
 
 
 def _username(token, cookie):
-    return jmap(SESSION_URL, {"token": token, "cookie": cookie})["username"]
+    session = jmap(SESSION_URL, {"token": token, "cookie": cookie})
+    username = session.get("username") if isinstance(session, dict) else None
+    if not isinstance(username, str) or not username:
+        raise RuntimeError(
+            "Fastmail's answer had no username: these credentials were not stored"
+        )
+    return username
 
 
 def _collect(args):

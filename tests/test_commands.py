@@ -48,6 +48,34 @@ class Project(unittest.TestCase):
         Path("remote.sieve").write_text(REMOTE)
 
 
+class TerminalSafetyTest(Project):
+    def hostile_remote(self, outside_the_blocks=False):
+        if outside_the_blocks:  # what `assemble` prints is Fastmail's own text
+            Path("remote.sieve").write_text(REMOTE + "# \x1b[2Jowned\n")
+            return
+        hostile = f"{MARKER_START}\n# \x1b[2Jowned\n{MARKER_END}"
+        Path("remote.sieve").write_text(REMOTE.replace(BLOCK, hostile, 1))
+
+    def test_diff_never_prints_control_characters(self):
+        self.hostile_remote()
+        code, out, _ = run("diff", "--from-file", "remote.sieve")
+        self.assertNotIn("\x1b", out)
+        self.assertIn("owned", out)
+
+    def test_assemble_to_a_terminal_strips_them(self):
+        self.hostile_remote(outside_the_blocks=True)
+        out = io.StringIO()
+        out.isatty = lambda: True
+        with contextlib.redirect_stdout(out):
+            main(["assemble", "--from-file", "remote.sieve"])
+        self.assertNotIn("\x1b", out.getvalue())
+
+    def test_assemble_into_a_pipe_is_byte_for_byte(self):
+        self.hostile_remote(outside_the_blocks=True)
+        code, out, _ = run("assemble", "--from-file", "remote.sieve")
+        self.assertIn("\x1b[2J", out)
+
+
 class LintFixTest(Project):
     middle = "if true {\nstop;\n}\n"
 

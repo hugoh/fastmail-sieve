@@ -170,6 +170,18 @@ class MainTest(unittest.TestCase):
             self.assertEqual(len(err.strip().splitlines()), 1)
             self.assertTrue(err.startswith("✗ "))
 
+    def test_a_broken_http_exchange_is_a_one_line_failure(self):
+        import http.client
+
+        with mock.patch(
+            "fastmail_sieve.commands.folders.load_credentials",
+            side_effect=http.client.IncompleteRead(b"x"),
+        ):
+            code, out, err = self.run_main("folders")
+        self.assertEqual(code, 1)
+        self.assertEqual(len(err.strip().splitlines()), 1)
+        self.assertTrue(err.startswith("✗ "))
+
     def test_a_command_exit_code_is_returned(self):
         with mock.patch("fastmail_sieve.commands.lint.run_steps", return_value=1):
             self.assertEqual(self.run_main("lint", "--offline")[0], 1)

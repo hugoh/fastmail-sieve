@@ -3,6 +3,7 @@ import difflib
 from fastmail_sieve.commands._options import add_from_file, progress_console
 from fastmail_sieve.remote import load_remote
 from fastmail_sieve.sieve.script import assemble, read_fragments
+from fastmail_sieve.ui.tables import safe_text
 
 
 def add_parser(subparsers):
@@ -26,5 +27,5 @@ def run(args):
     remote = load_remote(args.from_file, progress_console())
     lines = unified(remote, assemble(remote, *read_fragments()))
     if lines:
-        print("\n".join(lines))
+        print(safe_text("\n".join(lines)))
     return 0

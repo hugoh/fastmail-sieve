@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from fastmail_sieve import config
 from fastmail_sieve.cli import main
@@ -86,6 +87,70 @@ class LoadConfigTest(InTempDir):
         (self.root / "fastmail-sieve.toml").write_text("rules-dir = \n")
         with self.assertRaisesRegex(RuntimeError, "fastmail-sieve.toml"):
             load_config(self.root)
+
+
+class PathsStayInsideTheProjectTest(InTempDir):
+    def load(self, text):
+        (self.root / "fastmail-sieve.toml").write_text(text)
+        return load_config(self.root)
+
+    def test_unsafe_paths_are_refused_for_both_options(self):
+        for option in ("rules-dir", "variables-file"):
+            for value in ("/etc", "../outside", "a/../../b", ""):
+                with (
+                    self.subTest(option=option, value=value),
+                    self.assertRaisesRegex(
+                        RuntimeError, rf"{option}.*relative.*inside the project"
+                    ),
+                ):
+                    self.load(f"{option} = {value!r}\n")
+
+    def test_a_symlink_out_of_the_project_is_refused(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        (self.root / "link").symlink_to(outside.name)
+        with self.assertRaisesRegex(RuntimeError, "rules-dir.*inside the project"):
+            self.load('rules-dir = "link"\n')
+
+    def test_nested_relative_paths_are_fine(self):
+        loaded = self.load('rules-dir = "a/b"\nvariables-file = "c/d.toml"\n')
+        self.assertEqual(loaded.fragment_files[0], "a/b/top.sieve")
+
+
+class UntrustedParentTest(InTempDir):
+    """A project found by walking up must be one this user controls: running the
+    tool in a subdirectory of someone else's directory must not adopt its rules."""
+
+    def make_parent(self, mode=0o700):
+        parent = self.root / "parent"
+        (parent / "rules").mkdir(parents=True)
+        (parent / "rules" / "top.sieve").write_text("# planted\n")
+        parent.chmod(mode)
+        child = parent / "child"
+        child.mkdir()
+        return parent, child
+
+    def test_a_world_writable_parent_is_not_adopted(self):
+        parent, child = self.make_parent(0o777)
+        self.assertIsNone(find_root(child))
+
+    def test_a_parent_owned_by_someone_else_is_not_adopted(self):
+        parent, child = self.make_parent()
+        with mock.patch("fastmail_sieve.config.os.getuid", return_value=424242):
+            self.assertIsNone(find_root(child))
+
+    def test_your_own_private_parent_is_adopted(self):
+        parent, child = self.make_parent(0o755)
+        self.assertEqual(find_root(child), parent)
+
+    def test_the_starting_directory_is_always_yours_to_choose(self):
+        parent, _ = self.make_parent(0o777)
+        self.assertEqual(find_root(parent), parent)
+
+    def test_a_trusted_project_beyond_an_untrusted_one_is_still_found(self):
+        parent, child = self.make_parent(0o777)
+        (self.root / "fastmail-sieve.toml").write_text("")
+        self.assertEqual(find_root(child), self.root)
 
 
 class CurrentTest(InTempDir):
