@@ -37,9 +37,6 @@ Repository = "https://github.com/hugoh/fastmail-sieve"
 fastmail-sieve = "fastmail_sieve.cli:main"
 fmsieve = "fastmail_sieve.cli:main"
 
-[project.optional-dependencies]
-auth = ["browser-cookie3", "pycryptodomex"]
-
 [dependency-groups]
 dev = [
   "ruff>=0.17.5",

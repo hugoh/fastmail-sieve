@@ -63,8 +63,7 @@ uv tool install fastmail-sieve          # or: pipx install fastmail-sieve
 uvx fastmail-sieve --help               # or run it without installing
 ```
 
-Python 3.11 or newer. The optional `auth` extra (`fastmail-sieve[auth]`) is
-only for `auth --discover`. The command is also installed as `fmsieve`.
+Python 3.11 or newer. The command is also installed as `fmsieve`.
 
 ## Quick start
 
@@ -137,13 +136,6 @@ below).
 
 `auth` checks the pair against Fastmail and stores it in the keychain (service
 `fastmail-sieve-rules`). Run it again when commands fail with HTTP 401.
-
-`fastmail-sieve auth --discover` can look for the cookie for you in the Fastmail
-desktop app and in Safari and Chrome. **It reads data that belongs to other
-apps**: it asks the macOS keychain for the "Fastmail Safe Storage" key and
-decrypts the app's cookie database. It is off by default, needs the `auth`
-extra (`pip install 'fastmail-sieve[auth]'`), and prints what it will read
-before it does.
 
 ### Where credentials are read from
 
