@@ -1,6 +1,7 @@
 import json
 import random
 import re
+import time
 import urllib.parse
 from importlib.metadata import PackageNotFoundError, version
 
@@ -14,32 +15,63 @@ SESSION_URL = "https://api.fastmail.com/jmap/session"
 MAIL = "urn:ietf:params:jmap:mail"
 CONNECT_TIMEOUT_SECONDS = 10
 TIMEOUT_SECONDS = 30
-ALLOWED_DOMAIN = "fastmail.com"
+ALLOWED_HOST = "api.fastmail.com"
 
 MAX_RETRIES = 3
 BACKOFF_SECONDS = 1.0
 MAX_BACKOFF_SECONDS = 30.0
 MAX_RETRY_AFTER_SECONDS = 60.0
+DEADLINE_SECONDS = 90.0  # no new retry once a request has struggled this long
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
 # A read can be repeated freely. A write is repeated only when Fastmail has
 # plainly not acted on it: the connection never opened, or it answered 429.
 READ_RETRY_STATUSES = (429, 502, 503, 504)
 WRITE_RETRY_STATUSES = (429,)
+RETRY_METHOD_ERRORS = ("serverFail", "serverUnavailable", "rateLimit")
 READ_ONLY_METHODS = re.compile(r"/(get|query|changes|queryChanges)$|^Validate/sieve$")
+
+
+def backoff(tries):
+    """Seconds to wait before retry number `tries` (1, 2, ...): exponential, with
+    jitter so runs do not all come back together, and never beyond the ceiling."""
+    if tries < 1:
+        return 0
+    ceiling = min(MAX_BACKOFF_SECONDS, BACKOFF_SECONDS * 2 ** (tries - 1))
+    return random.uniform(ceiling / 2, ceiling)
+
+
+def _pause(tries):
+    time.sleep(backoff(tries))
 
 
 class _Retry(Retry):
     """Retry with a real pause before every retry (urllib3 retries a connection
-    error at once), jitter so runs do not all come back together, and a ceiling
-    on how long a `Retry-After` can make us wait."""
+    error at once), jitter, a ceiling on how long a `Retry-After` can make us
+    wait, and a deadline after which no new retry starts."""
+
+    started = None
+
+    def new(self, **kwargs):
+        retry = super().new(**kwargs)
+        retry.started = self.started
+        return retry
+
+    def increment(self, *args, **kwargs):
+        retry = super().increment(*args, **kwargs)
+        if retry.started is None:
+            retry.started = time.monotonic()
+        return retry
+
+    def is_exhausted(self):
+        late = (
+            self.started is not None
+            and time.monotonic() - self.started >= DEADLINE_SECONDS
+        )
+        return late or super().is_exhausted()
 
     def get_backoff_time(self):
-        tries = len(self.history)
-        if tries == 0:
-            return 0
-        ceiling = min(MAX_BACKOFF_SECONDS, BACKOFF_SECONDS * 2 ** (tries - 1))
-        return random.uniform(ceiling / 2, ceiling)
+        return backoff(len(self.history))
 
     def get_retry_after(self, response):
         wait = super().get_retry_after(response)
@@ -122,10 +154,10 @@ def _check_url(url):
             "Refusing to send the Fastmail login over "
             f"{parts.scheme or 'an unknown scheme'}: only https is allowed"
         )
-    if host != ALLOWED_DOMAIN and not host.endswith("." + ALLOWED_DOMAIN):
+    if host != ALLOWED_HOST:
         raise RuntimeError(
             f"Refusing to send the Fastmail login to {host or 'an unknown host'}: "
-            f"it is not a {ALLOWED_DOMAIN} address"
+            f"it is not an {ALLOWED_HOST} address"
         )
 
 
@@ -244,6 +276,30 @@ def get_session(credentials, call=jmap):
     return _sessions[key]
 
 
+class MethodError(RuntimeError):
+    """Fastmail answered a JMAP method with an error; `type` says which."""
+
+    def __init__(self, message, type):
+        super().__init__(message)
+        self.type = type
+
+
+def _retryable(kind, read_only):
+    """A read can be repeated after any busy-server error; a write only when
+    Fastmail says it did not act on it (rate limited)."""
+    return kind == "rateLimit" or (read_only and kind in RETRY_METHOD_ERRORS)
+
+
+def _first_response(reply, method):
+    try:
+        name, result, _ = reply["methodResponses"][0]
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        raise RuntimeError(
+            f"Fastmail's answer to {method} was not in the expected form"
+        ) from error
+    return name, result
+
+
 def invoke(credentials, using, method, arguments, call=jmap):
     """Make one JMAP method call on the primary mail account and return its result."""
     session = get_session(credentials, call)
@@ -253,26 +309,26 @@ def invoke(credentials, using, method, arguments, call=jmap):
             "Fastmail offered no mail account to these credentials: "
             "an API token needs the Email scope"
         )
-    reply = call(
-        session["apiUrl"],
-        credentials,
-        {
-            "using": list(using),
-            "methodCalls": [[method, {"accountId": account, **arguments}, "0"]],
-        },
-    )
-    try:
-        name, result, _ = reply["methodResponses"][0]
-    except (KeyError, IndexError, TypeError, ValueError) as error:
-        raise RuntimeError(
-            f"Fastmail's answer to {method} was not in the expected form"
-        ) from error
-    if name == "error":
-        reason = result.get("description") or result.get("type") or result
-        raise RuntimeError(
-            f"Fastmail rejected {method}: {result.get('type', 'error')}: {reason}"
+    request = {
+        "using": list(using),
+        "methodCalls": [[method, {"accountId": account, **arguments}, "0"]],
+    }
+    read_only = is_read_only(request)
+    for attempt in range(MAX_RETRIES + 1):
+        name, result = _first_response(
+            call(session["apiUrl"], credentials, request), method
         )
-    return result
+        if name != "error":
+            return result
+        result = result if isinstance(result, dict) else {}
+        kind = result.get("type")
+        if attempt < MAX_RETRIES and _retryable(kind, read_only):
+            _pause(attempt + 1)
+            continue
+        reason = result.get("description") or kind or result
+        raise MethodError(
+            f"Fastmail rejected {method}: {kind or 'error'}: {reason}", kind
+        )
 
 
 def _accounts(session):

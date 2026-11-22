@@ -1,6 +1,6 @@
 from dataclasses import dataclass, replace
 
-from fastmail_sieve.fastmail.jmap import invoke, jmap
+from fastmail_sieve.fastmail.jmap import MethodError, invoke, jmap
 from fastmail_sieve.sieve.script import (
     LEGACY_MARKER_END,
     LEGACY_MARKER_START,
@@ -184,13 +184,18 @@ def set_blocks(credentials, script, call=jmap):
         "sieveAtMiddle": script.middle,
         "sieveAtEnd": script.end,
     }
-    result = invoke(
-        credentials,
-        SIEVE_USING,
-        "SieveBlocks/set",
-        {"update": {"singleton": update}},
-        call,
-    )
+    try:
+        result = invoke(
+            credentials,
+            SIEVE_USING,
+            "SieveBlocks/set",
+            {"update": {"singleton": update}},
+            call,
+        )
+    except MethodError as error:
+        if error.type == "stateMismatch":
+            raise RuntimeError(CHANGED) from error
+        raise
     if result.get("notUpdated"):
         raise RuntimeError(f"Fastmail refused the update: {result['notUpdated']}")
 

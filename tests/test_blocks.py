@@ -330,6 +330,13 @@ class SetBlocksTest(unittest.TestCase):
             set_blocks(CREDS, remote(), session_then(reply))
 
 
+class SetBlocksConflictTest(unittest.TestCase):
+    def test_a_state_mismatch_is_the_changed_while_you_decided_message(self):
+        reply = {"methodResponses": [["error", {"type": "stateMismatch"}, "0"]]}
+        with self.assertRaisesRegex(RuntimeError, "changed while you were deciding"):
+            set_blocks(CREDS, remote(), session_then(reply))
+
+
 class ValidateSieveTest(unittest.TestCase):
     def reply(self, result):
         return session_then({"methodResponses": [["Validate/sieve", result, "0"]]})

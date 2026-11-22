@@ -29,6 +29,46 @@ def read_keychain():
         return None
 
 
+def delete_keychain():
+    """Remove what `auth` stored, under the current and the old service name;
+    return how many entries there were. Nothing stored is not an error."""
+    try:
+        import keyring
+        import keyring.errors
+
+        removed = 0
+        for service in (KEYCHAIN_SERVICE, LEGACY_KEYCHAIN_SERVICE):
+            for field in CREDENTIAL_FIELDS:
+                try:
+                    keyring.delete_password(service, field)
+                    removed += 1
+                except keyring.errors.PasswordDeleteError:
+                    pass
+        return removed
+    except Exception as error:
+        raise RuntimeError(
+            f"There is no usable keychain here ({type(error).__name__}): "
+            "nothing was removed"
+        ) from error
+
+
+def keychain_backend():
+    """(name, kind) of the keyring backend in use. kind is "secure" (an OS
+    keychain), "file" (keyrings.alt: credentials kept in a file) or "none"."""
+    try:
+        import keyring
+
+        backend = type(keyring.get_keyring())
+    except Exception:
+        return None, "none"
+    name = f"{backend.__module__}.{backend.__qualname__}"
+    if backend.__module__.startswith("keyring.backends.fail"):
+        return name, "none"
+    if backend.__module__.startswith("keyrings.alt"):
+        return name, "file"
+    return name, "secure"
+
+
 def store_keychain(username, token, cookie):
     try:
         import keyring

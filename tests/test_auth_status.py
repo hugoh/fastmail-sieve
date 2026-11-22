@@ -298,3 +298,60 @@ class StatusCommandTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AuthClearAndBackendTest(unittest.TestCase):
+    def run_main(
+        self, *argv, removed=3, backend=("keyring.backends.macOS.Keyring", "secure")
+    ):
+        out, err = io.StringIO(), io.StringIO()
+        delete = mock.Mock(return_value=removed)
+        if isinstance(removed, Exception):
+            delete.side_effect = removed
+        patches = [
+            mock.patch("fastmail_sieve.commands.auth.delete_keychain", delete),
+            mock.patch(
+                "fastmail_sieve.commands.auth.keychain_backend", return_value=backend
+            ),
+            mock.patch.dict("os.environ", {}, clear=True),
+        ]
+        with contextlib.ExitStack() as stack:
+            for patch in patches:
+                stack.enter_context(patch)
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = main(list(argv))
+        return code, out.getvalue() + err.getvalue(), delete
+
+    def test_clear_removes_the_stored_credentials(self):
+        code, output, delete = self.run_main("auth", "clear")
+        self.assertEqual(code, 0)
+        delete.assert_called_once_with()
+        self.assertIn("Removed", output)
+
+    def test_clear_with_nothing_stored_says_so(self):
+        code, output, _ = self.run_main("auth", "clear", removed=0)
+        self.assertEqual(code, 0)
+        self.assertIn("Nothing", output)
+
+    def test_clear_leaves_the_environment_alone_and_says_so(self):
+        code, output, _ = self.run_main("auth", "clear")
+        self.assertIn("environment", output)
+
+    def test_clear_without_a_keychain_fails_clearly(self):
+        code, output, _ = self.run_main(
+            "auth", "clear", removed=RuntimeError("there is no usable keychain here")
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("no usable keychain", output)
+
+    def test_status_names_the_keychain_backend(self):
+        code, output, _ = self.run_main("auth", "status")
+        self.assertIn("keyring.backends.macOS.Keyring", output)
+        self.assertNotIn("weaker", output)
+
+    def test_status_warns_about_a_file_backend(self):
+        code, output, _ = self.run_main(
+            "auth", "status", backend=("keyrings.alt.file.PlaintextKeyring", "file")
+        )
+        self.assertIn("keyrings.alt.file.PlaintextKeyring", output)
+        self.assertIn("weaker than the OS keychain", output)

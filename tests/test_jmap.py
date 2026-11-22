@@ -275,17 +275,19 @@ class UrlGuardTest(HttpCase):
     def test_other_hosts_are_refused_and_named(self):
         for url in (
             "https://evil.example/",
+            "https://www.fastmail.com/x",
+            "https://fastmail.com/x",
+            "https://anything.fastmail.com/x",
             "https://api.fastmail.com.evil.example/",
             "https://notfastmail.com/",
             "https://api.fastmail.com@evil.example/",
         ):
             with self.subTest(url=url):
-                self.refused(url, "not a fastmail.com address")
+                self.refused(url, "not an api.fastmail.com address")
 
-    def test_fastmail_hosts_are_accepted(self):
+    def test_only_the_api_host_is_accepted(self):
         for url in (
             "https://api.fastmail.com/jmap/api/",
-            "https://fastmail.com/x",
             "https://API.FASTMAIL.COM/x",
         ):
             with self.subTest(url=url):
@@ -307,6 +309,89 @@ class UrlGuardTest(HttpCase):
         with self.assertRaisesRegex(RuntimeError, "evil.example"):
             invoke(CREDS, ["urn:core"], "Thing/get", {})
         self.assertEqual(len(self.http.calls), 1)
+
+
+class DeadlineTest(unittest.TestCase):
+    """Retries stop starting once a request has been struggling for too long."""
+
+    def increment(self, retry):
+        from urllib3 import HTTPResponse
+
+        return retry.increment("GET", "/", response=HTTPResponse(status=503))
+
+    def test_a_retry_within_the_deadline_goes_ahead(self):
+        retry = self.increment(jmap_module._policy(True))
+        self.assertIsNotNone(self.increment(retry))
+
+    def test_no_new_retry_after_the_deadline(self):
+        from urllib3.exceptions import MaxRetryError
+
+        with mock.patch.object(jmap_module.time, "monotonic") as clock:
+            clock.return_value = 1000.0
+            retry = self.increment(jmap_module._policy(True))
+            clock.return_value = 1000.0 + jmap_module.DEADLINE_SECONDS + 1
+            with self.assertRaises(MaxRetryError):
+                self.increment(retry)
+
+
+class MethodErrorTest(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(jmap_module, "_pause")
+        self.pause = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def call_with(self, *answers):
+        pending = list(answers)
+        calls = []
+
+        def call(url, credentials, body=None):
+            calls.append(body)
+            if body is None:
+                return SESSION
+            return {"methodResponses": [pending.pop(0)]}
+
+        call.calls = calls
+        return call
+
+    def error(self, kind):
+        return ["error", {"type": kind}, "0"]
+
+    def ok(self):
+        return ["Thing/get", {"list": [1]}, "0"]
+
+    def test_a_busy_server_error_on_a_read_is_retried_after_a_pause(self):
+        for kind in ("serverFail", "serverUnavailable", "rateLimit"):
+            with self.subTest(kind=kind):
+                self.pause.reset_mock()
+                call = self.call_with(self.error(kind), self.ok())
+                result = invoke(CREDS, ["u"], "Thing/get", {}, call)
+                self.assertEqual(result, {"list": [1]})
+                self.pause.assert_called_once()
+
+    def test_a_read_gives_up_after_the_limit_with_the_reason(self):
+        call = self.call_with(*[self.error("serverFail")] * 10)
+        with self.assertRaisesRegex(RuntimeError, "serverFail"):
+            invoke(CREDS, ["u"], "Thing/get", {}, call)
+        self.assertEqual(self.pause.call_count, jmap_module.MAX_RETRIES)
+
+    def test_a_write_is_retried_only_when_rate_limited(self):
+        call = self.call_with(self.error("rateLimit"), ["Thing/set", {}, "0"])
+        self.assertEqual(invoke(CREDS, ["u"], "Thing/set", {}, call), {})
+        call = self.call_with(self.error("serverFail"), ["Thing/set", {}, "0"])
+        with self.assertRaisesRegex(RuntimeError, "serverFail"):
+            invoke(CREDS, ["u"], "Thing/set", {}, call)
+
+    def test_other_errors_are_not_retried_and_carry_their_type(self):
+        call = self.call_with(self.error("forbidden"), self.ok())
+        with self.assertRaises(jmap_module.MethodError) as raised:
+            invoke(CREDS, ["u"], "Thing/get", {}, call)
+        self.assertEqual(raised.exception.type, "forbidden")
+        self.pause.assert_not_called()
+
+    def test_pauses_grow_and_are_jittered(self):
+        self.assertTrue(0 < jmap_module.backoff(1) <= 1.0)
+        self.assertTrue(1.0 <= jmap_module.backoff(2) <= 2.0)
+        self.assertLessEqual(jmap_module.backoff(30), jmap_module.MAX_BACKOFF_SECONDS)
 
 
 class ReadOnlyTest(unittest.TestCase):
