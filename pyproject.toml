@@ -25,7 +25,7 @@ dependencies = [
   "click>=8.1,<9",
   "keyring>=25",
   "requests>=2.32,<3",
-  "rich>=14,<15",
+  "rich>=15,<16",
   "sievelib>=1.6,<1.7",
   "urllib3>=2.2,<3",
 ]
