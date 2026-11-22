@@ -154,10 +154,10 @@ def _check_url(url):
             "Refusing to send the Fastmail login over "
             f"{parts.scheme or 'an unknown scheme'}: only https is allowed"
         )
-    if host != ALLOWED_HOST:
+    if host != ALLOWED_HOST and not host.endswith("." + ALLOWED_HOST):
         raise RuntimeError(
             f"Refusing to send the Fastmail login to {host or 'an unknown host'}: "
-            f"it is not an {ALLOWED_HOST} address"
+            f"it is not an {ALLOWED_HOST} address or one of its regional hosts"
         )
 
 

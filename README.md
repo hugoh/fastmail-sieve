@@ -72,7 +72,8 @@ Reads are retried with backoff when Fastmail is busy or unreachable (HTTP 429
 and 5xx, connection errors, and JMAP `serverFail`, `serverUnavailable` and
 `rateLimit` errors), `Retry-After` is honoured, and no new retry starts after
 90 seconds. A write is retried only when it provably did not happen. The login
-is only ever sent to `api.fastmail.com`.
+is only ever sent to `api.fastmail.com` or one of its regional hosts such as
+`phl.api.fastmail.com`.
 
 ## Quick start
 

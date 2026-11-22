@@ -230,16 +230,22 @@ class UrlGuardTest(HttpCase):
             "https://fastmail.com/x",
             "https://anything.fastmail.com/x",
             "https://api.fastmail.com.evil.example/",
+            "https://phl.api.fastmail.com.evil.example/",
+            "https://evilapi.fastmail.com/x",
+            "https://xapi.fastmail.com/x",
+            "https://phl.evilapi.fastmail.com/x",
             "https://notfastmail.com/",
             "https://api.fastmail.com@evil.example/",
         ):
             with self.subTest(url=url):
                 self.refused(url, "not an api.fastmail.com address")
 
-    def test_only_the_api_host_is_accepted(self):
+    def test_the_api_host_and_its_regional_hosts_are_accepted(self):
         for url in (
             "https://api.fastmail.com/jmap/api/",
             "https://API.FASTMAIL.COM/x",
+            "https://phl.api.fastmail.com/jmap/api/",
+            "https://ord.api.fastmail.com/jmap/api/",
         ):
             with self.subTest(url=url):
                 self.http.add(responses.GET, url, json={"ok": True})
