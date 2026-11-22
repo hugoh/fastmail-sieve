@@ -3,7 +3,7 @@ from pathlib import Path
 from fastmail_sieve import config
 from fastmail_sieve.fastmail.blocks import NO_BLOCKS, get_script
 from fastmail_sieve.fastmail.credentials import gather, pick
-from fastmail_sieve.fastmail.jmap import get_session, jmap
+from fastmail_sieve.fastmail.jmap import get_session
 from fastmail_sieve.fastmail.mailboxes import fetch_mailboxes
 from fastmail_sieve.sieve.script import fragment_files
 from fastmail_sieve.steps import Result, Step, require
@@ -21,8 +21,7 @@ class Doctor:
     """Checks, in the order a first-time user would hit problems. Details name
     sources and tiers, never values."""
 
-    def __init__(self, call=jmap):
-        self.call = call
+    def __init__(self):
         self.sources = []
         self.session = None
         self.remote = None
@@ -49,7 +48,7 @@ class Doctor:
 
     def reachable(self):
         chosen = pick(self.sources, session_required=False)
-        self.session = get_session(chosen, self.call)
+        self.session = get_session(chosen)
         user = self.session.get("username", "an unknown user")
         what = "API token" if chosen["kind"] == "api" else "session token + cookie"
         return Result(
@@ -67,7 +66,7 @@ class Doctor:
         )
 
     def folders(self):
-        boxes = fetch_mailboxes(pick(self.sources, session_required=False), self.call)
+        boxes = fetch_mailboxes(pick(self.sources, session_required=False))
         return Result(detail=_count(len(boxes), "folder"))
 
     def script(self):
@@ -80,7 +79,7 @@ class Doctor:
                     "Fastmail did not offer the rules capability to these credentials"
                 ]
             )
-        self.remote = get_script(chosen, self.call)
+        self.remote = get_script(chosen)
         return Result(detail=_count(len(self.remote.text.encode("utf-8")), "byte"))
 
     def blocks(self):

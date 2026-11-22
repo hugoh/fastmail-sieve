@@ -9,56 +9,32 @@ import responses
 
 from fastmail_sieve.fastmail import jmap as jmap_module
 from fastmail_sieve.fastmail.jmap import SESSION_URL, invoke, jmap
+from tests.support import API as FASTMAIL_API
+from tests.support import FastmailCase
 
 CREDS = {"token": "fma1-secret", "cookie": "__Http-s_x=y"}
 MAIL = "urn:ietf:params:jmap:mail"
 
 
-class FakeCall:
-    """A fake JMAP call: the session on GET, then `reply`; records each request."""
-
-    def __init__(self, reply):
-        self.reply = reply
-        self.calls = []
-
-    def __call__(self, url, credentials, body=None):
-        self.calls.append((url, body))
-        if body is None:
-            return {
-                "apiUrl": "https://api.example/jmap",
-                "primaryAccounts": {MAIL: "u1"},
-            }
-        return self.reply
-
-
-def fake_call(reply):
-    return FakeCall(reply)
-
-
-class InvokeTest(unittest.TestCase):
+class InvokeTest(FastmailCase):
     def test_reads_the_session_then_makes_one_method_call(self):
-        call = fake_call({"methodResponses": [["Thing/get", {"list": [1]}, "0"]]})
-        result = invoke(CREDS, ["urn:core"], "Thing/get", {"ids": None}, call)
+        self.reply("Thing/get", {"list": [1]})
+        result = invoke(CREDS, ["urn:core"], "Thing/get", {"ids": None})
         self.assertEqual(result, {"list": [1]})
-        (session_url, _), (api_url, body) = call.calls
         self.assertEqual(
-            (session_url, api_url), (SESSION_URL, "https://api.example/jmap")
+            [(c.request.method, c.request.url) for c in self.http.calls],
+            [("GET", SESSION_URL), ("POST", FASTMAIL_API)],
         )
+        body = self.bodies[0]
         self.assertEqual(body["using"], ["urn:core"])
         self.assertEqual(
             body["methodCalls"], [["Thing/get", {"accountId": "u1", "ids": None}, "0"]]
         )
 
     def test_an_error_response_becomes_a_runtime_error_with_the_reason(self):
-        call = fake_call(
-            {
-                "methodResponses": [
-                    ["error", {"type": "forbidden", "description": "no scope"}, "0"]
-                ]
-            }
-        )
+        self.reply("error", {"type": "forbidden", "description": "no scope"})
         with self.assertRaisesRegex(RuntimeError, "Thing/get.*forbidden.*no scope"):
-            invoke(CREDS, ["urn:core"], "Thing/get", {}, call)
+            invoke(CREDS, ["urn:core"], "Thing/get", {})
 
 
 API = "https://api.fastmail.com/x"
@@ -186,17 +162,6 @@ class SessionCacheTest(HttpCase):
         invoke({"token": "another", "cookie": None}, ["urn:core"], "Thing/get", {})
         self.assertEqual(len(self.http.calls), 4)
 
-    def test_a_fake_call_is_never_cached(self):
-        calls = []
-
-        def call(url, credentials, body=None):
-            calls.append(body is None)
-            return SESSION if body is None else ANSWER
-
-        invoke(CREDS, ["urn:core"], "Thing/get", {}, call)
-        invoke(CREDS, ["urn:core"], "Thing/get", {}, call)
-        self.assertEqual(calls.count(True), 2)
-
 
 class UnreadableAnswerTest(HttpCase):
     """Whatever goes wrong on the wire is one readable line, never a traceback."""
@@ -224,37 +189,20 @@ class UnreadableAnswerTest(HttpCase):
             self.assertRegex(self.failure(), "larger than expected")
 
 
-class InvokeShapeTest(unittest.TestCase):
-    def call_returning(self, session, reply=None):
-        def call(url, credentials, body=None):
-            return session if body is None else reply
-
-        return call
-
+class InvokeShapeTest(FastmailCase):
     def test_credentials_with_no_mail_account_say_what_is_missing(self):
-        call = self.call_returning(
-            {"apiUrl": "https://api.fastmail.com/x", "primaryAccounts": {}}
-        )
+        self.session = {"apiUrl": FASTMAIL_API, "primaryAccounts": {}}
         with self.assertRaisesRegex(RuntimeError, "no mail account.*Email scope"):
-            invoke(CREDS, ["urn:core"], "Thing/get", {}, call)
+            invoke(CREDS, ["urn:core"], "Thing/get", {})
 
     def test_an_answer_without_method_responses_is_explained(self):
-        session = {
-            "apiUrl": "https://api.fastmail.com/x",
-            "primaryAccounts": {MAIL: "u1"},
-        }
         for reply in ({}, {"methodResponses": []}, None, "text"):
             with (
                 self.subTest(reply=reply),
                 self.assertRaisesRegex(RuntimeError, "not in the expected form"),
             ):
-                invoke(
-                    CREDS,
-                    ["urn:core"],
-                    "Thing/get",
-                    {},
-                    self.call_returning(session, reply),
-                )
+                self.reply_raw(reply)
+                invoke(CREDS, ["urn:core"], "Thing/get", {})
 
 
 class UrlGuardTest(HttpCase):
@@ -334,57 +282,50 @@ class DeadlineTest(unittest.TestCase):
                 self.increment(retry)
 
 
-class MethodErrorTest(unittest.TestCase):
+class MethodErrorTest(FastmailCase):
     def setUp(self):
+        super().setUp()
         patcher = mock.patch.object(jmap_module, "_pause")
         self.pause = patcher.start()
         self.addCleanup(patcher.stop)
 
-    def call_with(self, *answers):
-        pending = list(answers)
-        calls = []
-
-        def call(url, credentials, body=None):
-            calls.append(body)
-            if body is None:
-                return SESSION
-            return {"methodResponses": [pending.pop(0)]}
-
-        call.calls = calls
-        return call
-
     def error(self, kind):
-        return ["error", {"type": kind}, "0"]
+        self.reply("error", {"type": kind})
 
-    def ok(self):
-        return ["Thing/get", {"list": [1]}, "0"]
+    def ok(self, name="Thing/get", result=None):
+        self.reply(name, {"list": [1]} if result is None else result)
 
     def test_a_busy_server_error_on_a_read_is_retried_after_a_pause(self):
         for kind in ("serverFail", "serverUnavailable", "rateLimit"):
             with self.subTest(kind=kind):
                 self.pause.reset_mock()
-                call = self.call_with(self.error(kind), self.ok())
-                result = invoke(CREDS, ["u"], "Thing/get", {}, call)
+                self.error(kind)
+                self.ok()
+                result = invoke(CREDS, ["u"], "Thing/get", {})
                 self.assertEqual(result, {"list": [1]})
                 self.pause.assert_called_once()
 
     def test_a_read_gives_up_after_the_limit_with_the_reason(self):
-        call = self.call_with(*[self.error("serverFail")] * 10)
+        for _ in range(10):
+            self.error("serverFail")
         with self.assertRaisesRegex(RuntimeError, "serverFail"):
-            invoke(CREDS, ["u"], "Thing/get", {}, call)
+            invoke(CREDS, ["u"], "Thing/get", {})
         self.assertEqual(self.pause.call_count, jmap_module.MAX_RETRIES)
 
     def test_a_write_is_retried_only_when_rate_limited(self):
-        call = self.call_with(self.error("rateLimit"), ["Thing/set", {}, "0"])
-        self.assertEqual(invoke(CREDS, ["u"], "Thing/set", {}, call), {})
-        call = self.call_with(self.error("serverFail"), ["Thing/set", {}, "0"])
+        self.error("rateLimit")
+        self.ok("Thing/set", {})
+        self.assertEqual(invoke(CREDS, ["u"], "Thing/set", {}), {})
+        self.error("serverFail")
+        self.ok("Thing/set", {})
         with self.assertRaisesRegex(RuntimeError, "serverFail"):
-            invoke(CREDS, ["u"], "Thing/set", {}, call)
+            invoke(CREDS, ["u"], "Thing/set", {})
 
     def test_other_errors_are_not_retried_and_carry_their_type(self):
-        call = self.call_with(self.error("forbidden"), self.ok())
+        self.error("forbidden")
+        self.ok()
         with self.assertRaises(jmap_module.MethodError) as raised:
-            invoke(CREDS, ["u"], "Thing/get", {}, call)
+            invoke(CREDS, ["u"], "Thing/get", {})
         self.assertEqual(raised.exception.type, "forbidden")
         self.pause.assert_not_called()
 

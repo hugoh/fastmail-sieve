@@ -6,22 +6,15 @@ from unittest import mock
 
 from fastmail_sieve import config
 from fastmail_sieve.doctor import Doctor, doctor_steps
-from fastmail_sieve.fastmail.jmap import MAIL
+from tests.support import SESSION as BASE_SESSION
+from tests.support import FastmailCase
 from tests.test_blocks import JSON
 
 SESSION_TOKEN = "fma1-SECRETSESSIONTOKEN"
 COOKIE = "__Http-s_SECRETCOOKIE=1"
 API_TOKEN = "SECRETAPITOKEN"
 BOXES = [{"id": "P1", "name": "home", "parentId": None, "role": None}]
-SESSION = {
-    "username": "me@example.com",
-    "apiUrl": "https://api.example/jmap",
-    "primaryAccounts": {MAIL: "u1"},
-    "capabilities": {
-        "urn:ietf:params:jmap:core": {},
-        "https://www.fastmail.com/dev/rules": {},
-    },
-}
+SESSION = BASE_SESSION
 BOTH = [
     (
         "keychain",
@@ -42,28 +35,6 @@ SESSION_ONLY = BOTH[:1]
 API_ONLY = BOTH[1:]
 
 
-class FakeCall:
-    """A fake JMAP call that answers the session, folders and script requests."""
-
-    def __init__(self, session=SESSION, script=JSON):
-        self.session = session
-        self.script = script
-        self.seen = []
-
-    def __call__(self, url, credentials, body=None):
-        self.seen.append((credentials["token"], body and body["methodCalls"][0][0]))
-        if body is None:
-            return self.session
-        method = body["methodCalls"][0][0]
-        if method == "Mailbox/get":
-            return {"methodResponses": [[method, {"list": BOXES}, "0"]]}
-        return {"methodResponses": [[method, {"list": [self.script]}, "0"]]}
-
-
-def fake_call(session=SESSION, script=JSON):
-    return FakeCall(session, script)
-
-
 class Project(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -74,8 +45,8 @@ class Project(unittest.TestCase):
         self.addCleanup(config.use, config.Config())
 
 
-def doctor(sources, call=None):
-    instance = Doctor(call or fake_call())
+def doctor(sources):
+    instance = Doctor()
     patcher = mock.patch("fastmail_sieve.doctor.gather", return_value=sources)
     patcher.start()
     return instance, patcher
@@ -100,9 +71,19 @@ class ProjectFilesTest(Project):
         self.assertTrue(any("fastmail-sieve init" in error for error in result.errors))
 
 
-class NetworkStepsTest(unittest.TestCase):
-    def tearDown(self):
-        mock.patch.stopall()
+class NetworkStepsTest(FastmailCase):
+    script = JSON
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(mock.patch.stopall)
+        self.session = SESSION
+        self.handler = self.answer
+
+    def answer(self, body):
+        method = body["methodCalls"][0][0]
+        result = {"list": BOXES if method == "Mailbox/get" else [self.script]}
+        return {"methodResponses": [[method, result, "0"]]}
 
     def test_credentials_are_described_by_source_and_tier_never_by_value(self):
         subject, _ = doctor(BOTH)
@@ -134,25 +115,23 @@ class NetworkStepsTest(unittest.TestCase):
         self.assertNotIn("not advertised", subject.official_api().detail)
 
     def test_folders_use_the_api_token_when_there_is_one(self):
-        call = fake_call()
-        subject, _ = doctor(BOTH, call)
+        subject, _ = doctor(BOTH)
         subject.credentials()
         result = subject.folders()
         self.assertEqual(result.detail, "1 folder")
-        self.assertIn((API_TOKEN, "Mailbox/get"), call.seen)
+        self.assertIn((API_TOKEN, "Mailbox/get"), self.seen)
 
     def test_the_script_uses_the_session_pair_and_reports_its_size(self):
-        call = fake_call()
-        subject, _ = doctor(BOTH, call)
+        subject, _ = doctor(BOTH)
         subject.credentials()
         result = subject.script()
-        self.assertIn((SESSION_TOKEN, "SieveBlocks/get"), call.seen)
+        self.assertIn((SESSION_TOKEN, "SieveBlocks/get"), self.seen)
         self.assertRegex(result.detail, r"\d+ bytes")
 
     def test_the_size_counts_bytes_not_characters(self):
         multibyte = {**JSON, "sieveRequire": "# \u2328 \U0001f6d2 r\u00e9sum\u00e9"}
-        call = fake_call(script=multibyte)
-        subject, _ = doctor(BOTH, call)
+        self.script = multibyte
+        subject, _ = doctor(BOTH)
         subject.credentials()
         result = subject.script()
         text = subject.remote.text
@@ -167,7 +146,8 @@ class NetworkStepsTest(unittest.TestCase):
 
     def test_a_script_without_managed_blocks_says_how_to_add_them(self):
         bare = {**JSON, "sieveAtStart": "", "sieveAtMiddle": "", "sieveAtEnd": ""}
-        subject, _ = doctor(SESSION_ONLY, fake_call(script=bare))
+        self.script = bare
+        subject, _ = doctor(SESSION_ONLY)
         subject.credentials()
         subject.script()
         self.assertTrue(

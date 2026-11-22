@@ -1,6 +1,6 @@
 import re
 
-from fastmail_sieve.fastmail.jmap import MAIL, invoke, jmap
+from fastmail_sieve.fastmail.jmap import MAIL, invoke
 from fastmail_sieve.sieve.format import canonical_inbox, sieve_folder_name
 from fastmail_sieve.ui.tables import safe_text, strip_variation_selectors
 
@@ -12,13 +12,12 @@ REFERENCE = re.compile(
 QUOTED = re.compile(r'"([^"]+)"')
 
 
-def fetch_mailboxes(credentials, call=jmap):
+def fetch_mailboxes(credentials):
     result = invoke(
         credentials,
         USING,
         "Mailbox/get",
         {"ids": None, "properties": ["id", "name", "parentId", "role"]},
-        call,
     )
     return result["list"]
 

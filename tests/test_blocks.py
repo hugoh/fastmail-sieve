@@ -13,6 +13,7 @@ from fastmail_sieve.sieve.script import (
     MARKER_START,
     assemble,
 )
+from tests.support import FastmailCase
 
 CREDS = {"token": "fma1-x", "cookie": "c=1"}
 MAIL = "urn:ietf:params:jmap:mail"
@@ -248,35 +249,12 @@ class ManagedBlocksTest(unittest.TestCase):
             self.BARE.with_fragments("", "", "")
 
 
-class SessionThen:
-    """A fake JMAP call: the session on GET, then `reply`; records each body."""
-
-    def __init__(self, reply):
-        self.reply = reply
-        self.calls = []
-
-    def __call__(self, url, credentials, body=None):
-        self.calls.append(body)
-        if body is None:
-            return {
-                "apiUrl": "https://api.example/jmap",
-                "primaryAccounts": {MAIL: "u1"},
-            }
-        return self.reply
-
-
-def session_then(reply):
-    return SessionThen(reply)
-
-
-class GetScriptTest(unittest.TestCase):
+class GetScriptTest(FastmailCase):
     def test_reads_the_singleton_with_the_rules_capabilities(self):
-        call = session_then(
-            {"methodResponses": [["SieveBlocks/get", {"list": [JSON]}, "0"]]}
-        )
-        script = get_script(CREDS, call)
+        self.reply("SieveBlocks/get", {"list": [JSON]})
+        script = get_script(CREDS)
         self.assertEqual(script.text, RemoteScript.from_json(JSON).text)
-        body = call.calls[1]
+        body = self.bodies[0]
         self.assertEqual(
             body["using"],
             ["https://www.fastmail.com/dev/rules", "https://www.fastmail.com/dev/user"],
@@ -287,24 +265,16 @@ class GetScriptTest(unittest.TestCase):
         )
 
     def test_no_script_is_an_error(self):
-        call = session_then(
-            {"methodResponses": [["SieveBlocks/get", {"list": []}, "0"]]}
-        )
+        self.reply("SieveBlocks/get", {"list": []})
         with self.assertRaisesRegex(RuntimeError, "no Sieve script"):
-            get_script(CREDS, call)
+            get_script(CREDS)
 
 
-class SetBlocksTest(unittest.TestCase):
+class SetBlocksTest(FastmailCase):
     def test_sends_only_the_three_managed_blocks(self):
-        call = session_then(
-            {
-                "methodResponses": [
-                    ["SieveBlocks/set", {"updated": {"singleton": None}}, "0"]
-                ]
-            }
-        )
-        set_blocks(CREDS, remote("a;\n", "b;\n", "c;\n"), call)
-        [name, arguments, _] = call.calls[1]["methodCalls"][0]
+        self.reply("SieveBlocks/set", {"updated": {"singleton": None}})
+        set_blocks(CREDS, remote("a;\n", "b;\n", "c;\n"))
+        [name, arguments, _] = self.bodies[0]["methodCalls"][0]
         self.assertEqual(name, "SieveBlocks/set")
         self.assertEqual(
             arguments["update"]["singleton"],
@@ -317,49 +287,41 @@ class SetBlocksTest(unittest.TestCase):
         self.assertEqual(arguments["accountId"], "u1")
 
     def test_a_refused_update_is_an_error(self):
-        reply = {
-            "methodResponses": [
-                [
-                    "SieveBlocks/set",
-                    {"notUpdated": {"singleton": {"type": "invalidProperties"}}},
-                    "0",
-                ]
-            ]
-        }
+        self.reply(
+            "SieveBlocks/set",
+            {"notUpdated": {"singleton": {"type": "invalidProperties"}}},
+        )
         with self.assertRaisesRegex(RuntimeError, "refused.*invalidProperties"):
-            set_blocks(CREDS, remote(), session_then(reply))
+            set_blocks(CREDS, remote())
 
-
-class SetBlocksConflictTest(unittest.TestCase):
     def test_a_state_mismatch_is_the_changed_while_you_decided_message(self):
-        reply = {"methodResponses": [["error", {"type": "stateMismatch"}, "0"]]}
+        self.reply("error", {"type": "stateMismatch"})
         with self.assertRaisesRegex(RuntimeError, "changed while you were deciding"):
-            set_blocks(CREDS, remote(), session_then(reply))
+            set_blocks(CREDS, remote())
 
 
-class ValidateSieveTest(unittest.TestCase):
-    def reply(self, result):
-        return session_then({"methodResponses": [["Validate/sieve", result, "0"]]})
-
+class ValidateSieveTest(FastmailCase):
     def test_a_valid_script_has_no_problem(self):
-        call = self.reply({"isValid": True, "errorDescription": ""})
-        self.assertIsNone(validate_sieve(CREDS, "stop;\n", call))
-        [name, arguments, _] = call.calls[1]["methodCalls"][0]
+        self.reply("Validate/sieve", {"isValid": True, "errorDescription": ""})
+        self.assertIsNone(validate_sieve(CREDS, "stop;\n"))
+        [name, arguments, _] = self.bodies[0]["methodCalls"][0]
         self.assertEqual(name, "Validate/sieve")
         self.assertEqual(arguments, {"accountId": "u1", "sieve": "stop;\n"})
         self.assertEqual(
-            call.calls[1]["using"],
+            self.bodies[0]["using"],
             ["https://www.fastmail.com/dev/rules", "https://www.fastmail.com/dev/user"],
         )
 
     def test_an_invalid_script_gives_fastmails_own_description(self):
-        call = self.reply(
-            {"isValid": False, "errorDescription": "line 4: syntax error"}
+        self.reply(
+            "Validate/sieve",
+            {"isValid": False, "errorDescription": "line 4: syntax error"},
         )
-        self.assertEqual(validate_sieve(CREDS, "x", call), "line 4: syntax error")
+        self.assertEqual(validate_sieve(CREDS, "x"), "line 4: syntax error")
 
     def test_an_answer_that_does_not_say_valid_is_not_taken_as_valid(self):
-        self.assertIn("did not say", validate_sieve(CREDS, "x", self.reply({})))
+        self.reply("Validate/sieve", {})
+        self.assertIn("did not say", validate_sieve(CREDS, "x"))
 
 
 if __name__ == "__main__":

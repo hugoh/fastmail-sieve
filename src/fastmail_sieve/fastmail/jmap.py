@@ -266,10 +266,8 @@ def _reason(error):
 _sessions = {}
 
 
-def get_session(credentials, call=jmap):
-    """The session for this login: asked for once per run when talking to Fastmail."""
-    if call is not jmap:
-        return call(SESSION_URL, credentials)
+def get_session(credentials):
+    """The session for this login: asked for once per run."""
     key = (credentials["token"], credentials.get("cookie"))
     if key not in _sessions:
         _sessions[key] = jmap(SESSION_URL, credentials)
@@ -300,9 +298,9 @@ def _first_response(reply, method):
     return name, result
 
 
-def invoke(credentials, using, method, arguments, call=jmap):
+def invoke(credentials, using, method, arguments):
     """Make one JMAP method call on the primary mail account and return its result."""
-    session = get_session(credentials, call)
+    session = get_session(credentials)
     account = _accounts(session).get(MAIL)
     if account is None:
         raise RuntimeError(
@@ -316,7 +314,7 @@ def invoke(credentials, using, method, arguments, call=jmap):
     read_only = is_read_only(request)
     for attempt in range(MAX_RETRIES + 1):
         name, result = _first_response(
-            call(session["apiUrl"], credentials, request), method
+            jmap(session["apiUrl"], credentials, request), method
         )
         if name != "error":
             return result

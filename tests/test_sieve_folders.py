@@ -8,6 +8,7 @@ from fastmail_sieve.fastmail.mailboxes import (
     render,
     with_paths,
 )
+from tests.support import FastmailCase
 
 BOXES = [
     {"id": "P-lC0", "name": "finance", "parentId": None, "role": None},
@@ -121,31 +122,13 @@ class SplitChecksTest(unittest.TestCase):
         self.assertIn('names it "taxes"', problems[0])
 
 
-class FetchTest(unittest.TestCase):
+class FetchTest(FastmailCase):
     def test_uses_session_account_and_api_url(self):
-        calls = []
-
-        def call(url, credentials, body=None):
-            calls.append((url, body))
-            if body is None:
-                return {
-                    "apiUrl": "https://api/x",
-                    "primaryAccounts": {"urn:ietf:params:jmap:mail": "u1"},
-                }
-            return {"methodResponses": [["Mailbox/get", {"list": BOXES}, "m1"]]}
-
-        self.assertEqual(fetch_mailboxes(CREDS, call), BOXES)
-        self.assertEqual(calls[1][0], "https://api/x")
-        self.assertEqual(calls[1][1]["methodCalls"][0][1]["accountId"], "u1")
+        self.reply("Mailbox/get", {"list": BOXES}, "m1")
+        self.assertEqual(fetch_mailboxes(CREDS), BOXES)
+        self.assertEqual(self.bodies[0]["methodCalls"][0][1]["accountId"], "u1")
 
     def test_jmap_error_is_raised(self):
-        def call(url, credentials, body=None):
-            if body is None:
-                return {
-                    "apiUrl": "u",
-                    "primaryAccounts": {"urn:ietf:params:jmap:mail": "a"},
-                }
-            return {"methodResponses": [["error", {"description": "nope"}, "m1"]]}
-
+        self.reply("error", {"description": "nope"}, "m1")
         with self.assertRaisesRegex(RuntimeError, "nope"):
-            fetch_mailboxes(CREDS, call)
+            fetch_mailboxes(CREDS)

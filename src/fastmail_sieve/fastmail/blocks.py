@@ -1,6 +1,6 @@
 from dataclasses import dataclass, replace
 
-from fastmail_sieve.fastmail.jmap import MethodError, invoke, jmap
+from fastmail_sieve.fastmail.jmap import MethodError, invoke
 from fastmail_sieve.sieve.script import (
     LEGACY_MARKER_END,
     LEGACY_MARKER_START,
@@ -169,16 +169,14 @@ class RemoteScript:
         )
 
 
-def get_script(credentials, call=jmap):
-    result = invoke(
-        credentials, SIEVE_USING, "SieveBlocks/get", {"ids": ["singleton"]}, call
-    )
+def get_script(credentials):
+    result = invoke(credentials, SIEVE_USING, "SieveBlocks/get", {"ids": ["singleton"]})
     if not result.get("list"):
         raise RuntimeError("Fastmail returned no Sieve script")
     return RemoteScript.from_json(result["list"][0])
 
 
-def set_blocks(credentials, script, call=jmap):
+def set_blocks(credentials, script):
     update = {
         "sieveAtStart": script.start,
         "sieveAtMiddle": script.middle,
@@ -190,7 +188,6 @@ def set_blocks(credentials, script, call=jmap):
             SIEVE_USING,
             "SieveBlocks/set",
             {"update": {"singleton": update}},
-            call,
         )
     except MethodError as error:
         if error.type == "stateMismatch":
@@ -200,11 +197,11 @@ def set_blocks(credentials, script, call=jmap):
         raise RuntimeError(f"Fastmail refused the update: {result['notUpdated']}")
 
 
-def validate_sieve(credentials, text, call=jmap):
+def validate_sieve(credentials, text):
     """Ask Fastmail whether it accepts this whole script: None if it does, else
     why not. Its parser is stricter than the Sieve spec (keywords must be
     lowercase), so only this answer says the script will be accepted."""
-    result = invoke(credentials, SIEVE_USING, "Validate/sieve", {"sieve": text}, call)
+    result = invoke(credentials, SIEVE_USING, "Validate/sieve", {"sieve": text})
     if result.get("isValid") is True:
         return None
     return (
