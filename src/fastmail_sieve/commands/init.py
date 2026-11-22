@@ -4,6 +4,7 @@ from fastmail_sieve.commands._options import confirm, invoke
 from fastmail_sieve.fastmail.blocks import CHANGED, get_script, set_blocks
 from fastmail_sieve.fastmail.credentials import LazySources, pick
 from fastmail_sieve.project import scaffold
+from fastmail_sieve.ui.tables import echo
 
 
 @click.command(
@@ -43,46 +44,49 @@ def _remote(args):
     if script.has_markers:
         if args.convert_markers:
             return _convert_markers(args, credentials, script)
-        print("✓ Fastmail already has the managed blocks")
+        echo("✓ Fastmail already has the managed blocks", style="green")
         return 0
-    print(
+    echo(
         "Your Fastmail Sieve script has no managed blocks yet. This adds three empty ones "
         "(start, middle and end): a one-time write. Code that is already there stays where it is."
     )
     if not args.yes and not confirm("Add the managed blocks to Fastmail?"):
-        print("✗ Not changed")
+        echo("✗ Not changed", style="red")
         return 1
     _ensure_unchanged(credentials, script)
     set_blocks(credentials, script.with_markers())
     if not get_script(credentials).has_markers:
         raise RuntimeError("Fastmail still reports no managed blocks after the update")
-    print("✓ Added the managed blocks to Fastmail")
+    echo("✓ Added the managed blocks to Fastmail", style="green")
     return 0
 
 
 def _convert_markers(args, credentials, script):
     if not script.uses_legacy_markers:
-        print("✓ The managed blocks already use fastmail-sieve's own markers")
+        echo(
+            "✓ The managed blocks already use fastmail-sieve's own markers",
+            style="green",
+        )
         return 0
-    print(
+    echo(
         'This replaces the "Managed by Sieve Sync" comments around your three '
         "managed blocks with fastmail-sieve's own. Your rules stay exactly as "
         "they are. Fastmail-Sieve-Sync no longer recognises the blocks afterwards, "
         "so do not run both tools on the same script."
     )
     if not args.yes and not confirm("Convert the markers on Fastmail?"):
-        print("✗ Not changed")
+        echo("✗ Not changed", style="red")
         return 1
     _ensure_unchanged(credentials, script)
     set_blocks(credentials, script.convert_markers())
     after = get_script(credentials)
     if after.uses_legacy_markers or after.fragments != script.fragments:
-        print(
+        echo(
             "✗ Fastmail's script does not look as expected after the update: "
             "check it with `fastmail-sieve diff`"
         )
         return 1
-    print("✓ Converted the markers")
+    echo("✓ Converted the markers", style="green")
     return 0
 
 
@@ -91,12 +95,12 @@ def run(args, project):
         raise RuntimeError("--convert-markers needs --remote")
     created, kept = scaffold(project)
     for name in created:
-        print(f"created {name}")
+        echo(f"created {name}")
     for name in kept:
-        print(f"kept    {name} (already there)")
+        echo(f"kept    {name} (already there)")
     if args.remote:
         return _remote(args)
-    print(
+    echo(
         "\nNext: `fastmail-sieve auth` to store your credentials, then "
         "`fastmail-sieve init --remote` once to prepare Fastmail's script, then "
         "`fastmail-sieve pull`."

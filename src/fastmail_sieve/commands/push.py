@@ -1,10 +1,9 @@
 import click
-from rich.console import Console
 
 from fastmail_sieve.commands._options import confirm, invoke
 from fastmail_sieve.commands.diff import unified
 from fastmail_sieve.steps import Session, lint_steps, run_steps, write_steps
-from fastmail_sieve.ui.tables import safe_text
+from fastmail_sieve.ui.tables import make_console, safe_text
 
 
 @click.command(
@@ -32,7 +31,7 @@ def _show(lines, console):
 
 
 def run(args, project):
-    console = Console(highlight=False)
+    console = make_console()
     session = Session(project)
     code = run_steps(lint_steps(project, session, strict=args.strict), console)
     if code:

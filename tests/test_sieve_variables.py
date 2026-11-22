@@ -8,6 +8,7 @@ from fastmail_sieve.sieve.variables import (
     load_descriptions,
     render,
 )
+from fastmail_sieve.ui.tables import make_console
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 DESCRIBED = {
@@ -167,7 +168,7 @@ class RenderTest(unittest.TestCase):
 
     def test_colour_only_adds_escape_codes(self):
         plain = self.render()
-        coloured = self.render(color=True)
+        coloured = self.render(console=make_console("always"))
         self.assertIn("\x1b[", coloured)
         self.assertEqual(ANSI.sub("", coloured), plain)
 

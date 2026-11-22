@@ -1,9 +1,9 @@
 import click
-from rich.console import Console
 
 from fastmail_sieve.commands._options import invoke
 from fastmail_sieve.doctor import Doctor, doctor_steps
 from fastmail_sieve.steps import run_steps
+from fastmail_sieve.ui.tables import make_console
 
 
 @click.command(
@@ -17,4 +17,4 @@ def command(ctx):
 
 
 def run(args, project):
-    return run_steps(doctor_steps(Doctor(project)), Console(highlight=False))
+    return run_steps(doctor_steps(Doctor(project)), make_console())

@@ -5,6 +5,7 @@ from fastmail_sieve.fastmail.blocks import NO_BLOCKS
 from fastmail_sieve.project import FRAGMENT_HEADERS
 from fastmail_sieve.remote import load_remote
 from fastmail_sieve.sieve.script import split
+from fastmail_sieve.ui.tables import echo
 
 
 @click.command(
@@ -44,11 +45,11 @@ def run(args, project):
     names = list(project.fragment_files)
     at_risk = _local_changes(project, blocks)
     if at_risk and not args.yes:
-        print("Pulling would replace local changes in:")
+        echo("Pulling would replace local changes in:")
         for name in at_risk:
-            print(f"  {name}")
+            echo(f"  {name}")
         if not confirm("Replace them with Fastmail's blocks?"):
-            print("✗ Not pulled")
+            echo("✗ Not pulled", style="red")
             return 1
     current = [
         project.path(name).read_text(encoding="utf-8")

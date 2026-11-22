@@ -14,14 +14,13 @@ from fastmail_sieve.sieve import lint as check_sieve
 from fastmail_sieve.sieve import wording as ex
 from fastmail_sieve.sieve.script import mentions_end, mentions_marker, mentions_start
 from fastmail_sieve.sieve.variable_docs import folder_label
-from fastmail_sieve.ui.tables import cell, render_table
+from fastmail_sieve.ui.tables import cell, make_console, render_table, styled
 
 CONDITIONALS = ("if", "elsif", "else")
 MAILBOX_GUARD = re.compile(r"^mailbox id .+ exists$")
 RULE_SUBJECT = re.compile(r"^the (\S+) address")
 AFTER_UI = "bottom"
 LIST_LIMIT = 3
-DEFAULT_WIDTH = 100
 ICONS = {
     "move": "📁",
     "label": "🔖",
@@ -37,7 +36,6 @@ VARIABLE_KINDS = {
     "flagged": "pin",
     "skipinbox": "skipinbox",
 }
-RESET, BOLD, DIM = "\x1b[0m", "\x1b[1m", "\x1b[2m"
 
 
 class Leaf(str):
@@ -582,11 +580,11 @@ def _details(rule):
     return Group(title, steps, *warnings)
 
 
-def _render(table, width, color):
-    return [("raw", line) for line in render_table(table, width, color)]
+def _render(table, console):
+    return [("raw", line) for line in render_table(table, console)]
 
 
-def _rules_table(rules, width, color):
+def _rules_table(rules, console):
     table = Table(box=box.ROUNDED, header_style="bold", show_lines=True, expand=True)
     table.add_column("ID", justify="right", no_wrap=True)
     table.add_column("Source", no_wrap=True)
@@ -598,7 +596,7 @@ def _rules_table(rules, width, color):
             cell(_source_label(rule), style),
             _details(rule),
         )
-    return _render(table, width, color)
+    return _render(table, console)
 
 
 def _sender_text(rule):
@@ -608,7 +606,7 @@ def _sender_text(rule):
     return shown + (f" +{extra} more" if extra > 0 else "")
 
 
-def _summary_table(rules, width, color):
+def _summary_table(rules, console):
     table = Table(box=box.ROUNDED, header_style="bold")
     table.add_column("Sender", overflow="fold")
     table.add_column("Outcome", overflow="fold")
@@ -619,16 +617,16 @@ def _summary_table(rules, width, color):
             reference.append(cell(" ❗", "yellow"))
         outcome = cell(" ".join(action.short for action in rule.actions), "bold")
         table.add_row(cell(_sender_text(rule)), outcome, reference)
-    return _render(table, width, color)
+    return _render(table, console)
 
 
-def _summary(rules, width, color):
+def _summary(rules, console):
     with_senders = [rule for rule in rules if rule.senders]
     if not with_senders:
         return []
     return [
         ("head", "SUMMARY"),
-        *_summary_table(with_senders, width, color),
+        *_summary_table(with_senders, console),
         ("blank", ""),
     ]
 
@@ -676,33 +674,33 @@ def _runs(rules):
     return runs
 
 
-def _layout_sequence(rules, width, color, disabled):
-    out = _summary(rules, width, color)
+def _layout_sequence(rules, console, disabled):
+    out = _summary(rules, console)
     note = "Rules are listed in the order they run. Fastmail's own rules are dimmed."
     out += [("head", "RULES"), ("note", note), ("blank", "")]
     for title, run in _runs(rules):
-        out += [("section", f"── {title} ──"), *_rules_table(run, width, color)]
+        out += [("section", f"── {title} ──"), *_rules_table(run, console)]
         if run[0].source == "ui":
             out += _disabled_note(disabled)
         out.append(("blank", ""))
     return out[:-1]
 
 
-def _layout(rules, width, color, disabled=()):
-    out = _summary(rules, width, color)
+def _layout(rules, console, disabled=()):
+    out = _summary(rules, console)
     note = (
         "Every rule below runs only while nothing earlier has stopped the message. "
         "Order: your rules, then Fastmail's UI rules, then your bottom rules."
     )
     out += [
         ("head", "RULES"),
-        *[("note", line) for line in textwrap.wrap(note, width)],
+        *[("note", line) for line in textwrap.wrap(note, console.width)],
         ("blank", ""),
     ]
     for key, section_rules in _sections(rules):
         out += [
             ("section", f"── {SECTIONS[key]} ──"),
-            *_rules_table(section_rules, width, color),
+            *_rules_table(section_rules, console),
         ]
         if key == "ui":
             out += _disabled_note(disabled)
@@ -710,19 +708,18 @@ def _layout(rules, width, color, disabled=()):
     return out[:-1]
 
 
-def _paint(kind, text, color):
-    if not color:
-        return text
+def _paint(kind, text, console):
     if kind in ("head", "section"):
-        return f"{BOLD}{text}{RESET}"
-    if kind in ("note",):
-        return f"{DIM}{text}{RESET}"
+        return styled(console, text, "bold")
+    if kind == "note":
+        return styled(console, text, "dim")
     return text
 
 
-def render(rules, width=DEFAULT_WIDTH, color=False, disabled=(), sequence=False):
+def render(rules, console=None, disabled=(), sequence=False):
     if not rules:
         return "No rules."
+    console = console or make_console("never")
     build = _layout_sequence if sequence else _layout
-    layout = build(rules, width, color, disabled)
-    return "\n".join(_paint(kind, text, color) for kind, text in layout)
+    layout = build(rules, console, disabled)
+    return "\n".join(_paint(kind, text, console) for kind, text in layout)

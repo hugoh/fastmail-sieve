@@ -9,7 +9,7 @@ from fastmail_sieve.commands._options import (
 )
 from fastmail_sieve.remote import load_remote
 from fastmail_sieve.sieve.script import assemble
-from fastmail_sieve.ui.tables import safe_text
+from fastmail_sieve.ui.tables import echo
 
 
 @click.command("diff", short_help="show what a push would change on Fastmail")
@@ -33,5 +33,5 @@ def run(args, project):
     remote = load_remote(args.from_file, progress_console())
     lines = unified(remote, assemble(remote, *project.read_fragments()))
     if lines:
-        print(safe_text("\n".join(lines)))
+        echo("\n".join(lines))
     return 0

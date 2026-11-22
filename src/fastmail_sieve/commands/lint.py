@@ -1,5 +1,4 @@
 import click
-from rich.console import Console
 
 from fastmail_sieve.commands._options import (
     from_file_option,
@@ -7,6 +6,7 @@ from fastmail_sieve.commands._options import (
     live_option,
 )
 from fastmail_sieve.steps import lint_steps, run_steps
+from fastmail_sieve.ui.tables import make_console
 
 
 @click.command(
@@ -46,4 +46,4 @@ def run(args, project):
         strict=args.strict,
         live=args.live,
     )
-    return run_steps(steps, Console(highlight=False))
+    return run_steps(steps, make_console())

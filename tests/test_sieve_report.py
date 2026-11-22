@@ -10,6 +10,7 @@ from fastmail_sieve.sieve.report import (
     disabled_ui_rules,
     render,
 )
+from fastmail_sieve.ui.tables import make_console
 
 DOCS = {
     "stop": {
@@ -291,7 +292,7 @@ class FullScriptTest(unittest.TestCase):
     def test_generated_rules_are_dimmed_and_yours_are_not(self):
         text = assembled(generated_before=GENERATED, middle=FINANCE)
         rules = self.full(text)
-        coloured = render(rules, sequence=True, color=True)
+        coloured = render(rules, make_console("always"), sequence=True)
         plain = render(rules, sequence=True)
         self.assertNotIn("\x1b[", plain)
         generated_line = next(
@@ -574,8 +575,8 @@ class SearchOverlapTest(unittest.TestCase):
 
 
 class RenderTest(unittest.TestCase):
-    def text(self, fragments, ui="", **options):
-        return render(build(fragments, ui), **options)
+    def text(self, fragments, ui="", console=None, **options):
+        return render(build(fragments, ui), console, **options)
 
     def test_rules_table_has_id_source_and_details_columns(self):
         text = self.text({"rules/middle.sieve": FINANCE}, ui_rule("x@y.z", LABEL))
@@ -627,7 +628,9 @@ class RenderTest(unittest.TestCase):
     def test_long_lines_wrap_to_the_width(self):
         domains = ", ".join(f'"domain{i}.example.com"' for i in range(12))
         custom = f'if address :domain "from" [{domains}] {{ fileinto "A"; }}\n'
-        text = self.text({"rules/middle.sieve": custom}, width=60)
+        text = self.text(
+            {"rules/middle.sieve": custom}, console=make_console("never", 60)
+        )
         card = text[text.index("RULES") :]
         self.assertTrue(all(len(line) <= 60 for line in card.splitlines()))
 
@@ -639,7 +642,9 @@ class RenderTest(unittest.TestCase):
     def test_colour_only_adds_escape_codes(self):
         fragments = {"rules/middle.sieve": FINANCE}
         plain = self.text(fragments, ui_rule("a@b.c", LABEL))
-        coloured = self.text(fragments, ui_rule("a@b.c", LABEL), color=True)
+        coloured = self.text(
+            fragments, ui_rule("a@b.c", LABEL), console=make_console("always")
+        )
         self.assertIn("\x1b[", coloured)
         self.assertNotIn("\x1b[", plain)
         self.assertEqual(ANSI.sub("", coloured), plain)

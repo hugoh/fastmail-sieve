@@ -1,5 +1,3 @@
-import sys
-
 import click
 
 from fastmail_sieve.commands._options import (
@@ -19,7 +17,7 @@ from fastmail_sieve.sieve.report import (
 from fastmail_sieve.sieve.script import live_fragments
 from fastmail_sieve.sieve.variables import load_report, load_variable_docs
 from fastmail_sieve.sieve.variables import render as render_variables
-from fastmail_sieve.ui.tables import terminal_width, use_color
+from fastmail_sieve.ui.tables import echo, make_console
 
 TOPICS = ("rules", "script", "variables")
 
@@ -49,16 +47,16 @@ def run(args, project):
         if args.live
         else load_assembled(project, args.from_file, console)
     )
-    width, color = terminal_width(args.width), use_color(args.color)
+    table_console = make_console(args.color, args.width)
     if args.topic == "variables":
         report = load_report(
             project, script, live_fragments(script) if args.live else None
         )
-        print(render_variables(report, width, color))
+        echo(render_variables(report, table_console))
         for warning in report.warnings:
-            print(f"warning: {warning}", file=sys.stderr)
+            echo(f"warning: {warning}", err=True)
         for error in report.errors:
-            print(f"error: {error}", file=sys.stderr)
+            echo(f"error: {error}", err=True)
         return 0
     if args.topic == "script":
         rules, sequence = build_full_rules(script, load_variable_docs(project)), True
@@ -69,5 +67,5 @@ def run(args, project):
             build_rules(fragments, script, load_variable_docs(project)),
             False,
         )
-    print(render(rules, width, color, disabled_ui_rules(script), sequence))
+    echo(render(rules, table_console, disabled_ui_rules(script), sequence))
     return 0

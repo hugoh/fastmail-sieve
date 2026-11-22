@@ -10,7 +10,7 @@ from fastmail_sieve.sieve import lint as check_sieve  # noqa: F401  (registers t
 from fastmail_sieve.sieve.script import mentions_marker
 from fastmail_sieve.sieve.variable_docs import load_descriptions, lookup  # noqa: F401
 from fastmail_sieve.sieve.wording import headings
-from fastmail_sieve.ui.tables import DEFAULT_WIDTH, cell, render_table
+from fastmail_sieve.ui.tables import cell, make_console, render_table
 
 VARIABLE_REFERENCE = re.compile(r"\$\{([A-Za-z_][\w.]*)\}")
 CALENDAR_OUTPUTS = ("outcome", "reason")
@@ -171,7 +171,7 @@ def _locations(locations):
     return cell(shown + (f"\nand {extra} more" if extra > 0 else ""))
 
 
-def render(report, width=DEFAULT_WIDTH, color=False):
+def render(report, console=None):
     table = Table(box=box.ROUNDED, header_style="bold", show_lines=True)
     table.add_column("Variable", no_wrap=True, style="bold")
     table.add_column("Meaning", overflow="fold")
@@ -183,7 +183,7 @@ def render(report, width=DEFAULT_WIDTH, color=False):
         table.add_row(
             name, meaning, _locations(variable.set_by), _locations(variable.read_by)
         )
-    return "\n".join(render_table(table, width, color))
+    return "\n".join(render_table(table, console or make_console("never")))
 
 
 def load_variable_docs(project):

@@ -3,6 +3,7 @@ import click
 from fastmail_sieve.commands._options import invoke, progress_console
 from fastmail_sieve.fastmail.credentials import load_credentials
 from fastmail_sieve.fastmail.mailboxes import fetch_mailboxes, render
+from fastmail_sieve.ui.tables import echo
 
 
 @click.command("folders", short_help="list Fastmail folders and their ids")
@@ -27,5 +28,5 @@ def run(args, project):
             f"Could not read the folders from Fastmail: {error}"
         ) from error
     lines = render(mailboxes, args.filter)
-    print("\n".join(lines) if lines else "No matching folders.")
+    echo("\n".join(lines) if lines else "No matching folders.")
     return 0

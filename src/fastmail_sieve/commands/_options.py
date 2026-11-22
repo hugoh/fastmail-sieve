@@ -1,14 +1,15 @@
 from types import SimpleNamespace
 
 import click
-from rich.console import Console
+
+from fastmail_sieve.ui.tables import make_console
 
 COLORS = ("auto", "always", "never")
 
 
 def progress_console():
     """Progress goes to stderr, so stdout stays clean for the command's output."""
-    return Console(stderr=True, highlight=False)
+    return make_console(stderr=True)
 
 
 def invoke(ctx, run, options):

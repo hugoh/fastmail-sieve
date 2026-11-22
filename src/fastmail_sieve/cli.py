@@ -1,11 +1,11 @@
 import http.client
-import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import click
 
 from fastmail_sieve import commands, config
+from fastmail_sieve.ui.tables import echo
 
 PROG = "fastmail-sieve"
 
@@ -89,7 +89,7 @@ def find_project(directory, command_name):
     if root is None:
         return config.Project(start)
     if root != start:
-        print(f"using the project at {root}", file=sys.stderr)
+        echo(f"using the project at {root}", err=True)
     return config.Project.load(root)
 
 
@@ -102,7 +102,7 @@ def main(argv=None):
     except click.Abort:
         return 130
     except (RuntimeError, OSError, ValueError, http.client.HTTPException) as error:
-        print(f"✗ {error}", file=sys.stderr)
+        echo(f"✗ {error}", err=True, style="red")
         return 1
     except KeyboardInterrupt:
         return 130
