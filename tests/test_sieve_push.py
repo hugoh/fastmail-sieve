@@ -6,13 +6,13 @@ from unittest import mock
 
 from rich.console import Console
 
+from fastmail_sieve.config import Config
 from fastmail_sieve.fastmail.blocks import RemoteScript
 from fastmail_sieve.steps import (
     FolderChecks,
     Result,
     Session,
     Step,
-    _lint_fragments,
     lint_steps,
     run_steps,
 )
@@ -83,12 +83,21 @@ class RunStepsTest(unittest.TestCase):
         self.assertIn("✓ Fetch", output(c))
 
 
+def project_with(top="", middle="", bottom=""):
+    """A project whose three fragments hold this text, without touching disk."""
+    return mock.Mock(
+        fragment_files=Config().fragment_files,
+        read_fragments=mock.Mock(return_value=(top, middle, bottom)),
+        path=Path,
+    )
+
+
+PROJECT = project_with()
+
+
 class LintFragmentsTest(unittest.TestCase):
     def lint(self, top="", middle="", bottom=""):
-        with mock.patch(
-            "fastmail_sieve.steps.read_fragments", return_value=(top, middle, bottom)
-        ):
-            return _lint_fragments()
+        return Session(project_with(top, middle, bottom)).lint_fragments()
 
     def test_unformatted_fragments_fail_with_the_fix(self):
         result = self.lint(top="if true {\nstop;\n}\n")
@@ -110,16 +119,13 @@ class FolderChecksTest(unittest.TestCase):
     def checks(self, middle):
         self.fetch = mock.Mock(return_value=self.BOXES)
         patches = (
-            mock.patch(
-                "fastmail_sieve.steps.read_fragments", return_value=("", middle, "")
-            ),
             mock.patch("fastmail_sieve.steps.LazySources", return_value=SOURCES),
             mock.patch("fastmail_sieve.steps.fetch_mailboxes", self.fetch),
         )
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
-        return FolderChecks()
+        return FolderChecks(Session(project_with(middle=middle)))
 
     def test_existing_ids_pass(self):
         result = self.checks('fileinto :mailboxid "P1" "INBOX.home";').check_ids()
@@ -165,22 +171,23 @@ def names(steps):
 
 class StepListTest(unittest.TestCase):
     def test_lint_is_the_whole_checklist_ending_with_the_warnings(self):
-        self.assertEqual(names(lint_steps()), LINT_NAMES)
+        self.assertEqual(names(lint_steps(PROJECT)), LINT_NAMES)
 
     def test_offline_is_only_the_format_and_syntax_check(self):
-        self.assertEqual(names(lint_steps(offline=True)), LINT_NAMES[:1])
+        self.assertEqual(names(lint_steps(PROJECT, offline=True)), LINT_NAMES[:1])
 
     def test_fix_formats_first_and_composes_with_offline(self):
         self.assertEqual(
-            names(lint_steps(offline=True, fix=True)),
+            names(lint_steps(PROJECT, offline=True, fix=True)),
             ["Format your rules", LINT_NAMES[0]],
         )
         self.assertEqual(
-            names(lint_steps(fix=True))[:2], ["Format your rules", LINT_NAMES[0]]
+            names(lint_steps(PROJECT, fix=True))[:2],
+            ["Format your rules", LINT_NAMES[0]],
         )
 
     def test_from_file_replaces_the_fetch(self):
-        steps = names(lint_steps(from_file="saved.sieve"))
+        steps = names(lint_steps(PROJECT, from_file="saved.sieve"))
         self.assertEqual(steps[1], "Read the saved script")
         self.assertNotIn("Fetch Fastmail's generated script", steps)
         self.assertIn("Valid folder names", steps)
@@ -192,7 +199,9 @@ class StepListTest(unittest.TestCase):
             if "folder" not in n and "Fetch" not in n and "validator" not in n
         ]
         expected.insert(1, "Read the saved script")
-        self.assertEqual(names(lint_steps(offline=True, from_file="f")), expected)
+        self.assertEqual(
+            names(lint_steps(PROJECT, offline=True, from_file="f")), expected
+        )
 
 
 class WarningsDisplayTest(unittest.TestCase):
@@ -236,14 +245,13 @@ class SessionTest(unittest.TestCase):
             ("get_script", self.get_script),
             ("set_blocks", self.set_blocks),
             ("LazySources", mock.Mock(return_value=SOURCES)),
-            ("read_fragments", mock.Mock(return_value=("new;\n", "", ""))),
         ):
             patcher = mock.patch(f"fastmail_sieve.steps.{name}", value)
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def fetched(self):
-        session = Session()
+    def fetched(self, project=None):
+        session = Session(project or project_with("new;\n"))
         session.fetch()
         return session
 
@@ -293,7 +301,7 @@ class SessionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "saved.sieve"
             path.write_text("saved script\n")
-            session = Session()
+            session = Session(PROJECT)
             self.assertEqual(session.read_file(str(path)).errors, [])
         self.assertEqual(session.remote, "saved script\n")
         self.get_script.assert_not_called()
@@ -367,14 +375,11 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(session.verify().errors, [])
 
     def test_verify_accepts_a_file_without_a_final_newline_after_a_push(self):
-        with mock.patch(
-            "fastmail_sieve.steps.read_fragments", return_value=("keep;", "", "")
-        ):
-            session = self.fetched()
-            self.assertEqual(session.push().errors, [])
-            [_, sent], _ = self.set_blocks.call_args
-            self.fresh = [sent]
-            self.assertEqual(session.verify().errors, [])
+        session = self.fetched(project_with("keep;"))
+        self.assertEqual(session.push().errors, [])
+        [_, sent], _ = self.set_blocks.call_args
+        self.fresh = [sent]
+        self.assertEqual(session.verify().errors, [])
 
     def test_verify_fails_when_the_blocks_still_differ(self):
         session = self.fetched()

@@ -33,8 +33,9 @@ def add_parser(subparsers):
     parser.set_defaults(run=run)
 
 
-def run(args):
+def run(args, project):
     steps = lint_steps(
+        project,
         offline=args.offline,
         from_file=args.from_file,
         fix=args.fix,

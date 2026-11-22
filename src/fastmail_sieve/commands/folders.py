@@ -13,7 +13,7 @@ def add_parser(subparsers):
     parser.set_defaults(run=run)
 
 
-def run(args):
+def run(args, project):
     console = progress_console()
     credentials = load_credentials(session_required=False)
     try:

@@ -13,12 +13,7 @@ from fastmail_sieve.fastmail.mailboxes import check_ids, check_names, fetch_mail
 from fastmail_sieve.sieve.format import format_errors, format_files
 from fastmail_sieve.sieve.lint import check_fragments, check_markers, check_syntax
 from fastmail_sieve.sieve.report import build_rules, disabled_ui_rules
-from fastmail_sieve.sieve.script import (
-    assemble,
-    fragment_files,
-    live_fragments,
-    read_fragments,
-)
+from fastmail_sieve.sieve.script import assemble, live_fragments
 from fastmail_sieve.sieve.variables import load_report, load_variable_docs
 from fastmail_sieve.sieve.warnings import collect_warnings
 
@@ -63,20 +58,6 @@ def run_steps(steps, console):
     return 0
 
 
-def _format_rules():
-    changed = format_files(list(fragment_files()))
-    if changed:
-        return Result(detail="reformatted " + ", ".join(changed))
-    return Result(detail="already formatted")
-
-
-def _lint_fragments():
-    fragments = read_fragments()
-    errors = format_errors(dict(zip(fragment_files(), fragments, strict=True)))
-    error = check_fragments(*fragments)
-    return Result(errors=[*errors, *([error] if error else [])])
-
-
 def require(value, what):
     """A value an earlier step sets; fail clearly if that step has not run."""
     if value is None:
@@ -92,12 +73,30 @@ class Session:
     """One run's view of Fastmail: the remote script, your assembled script, and
     the steps that read or write them."""
 
-    def __init__(self, live=False):
+    def __init__(self, project, live=False):
+        self.project = project
         self.live = live
         self.script = None
         self.remote = None
         self.assembled = None
         self._sources = None
+
+    def format_rules(self):
+        names = self.project.fragment_files
+        changed = format_files([self.project.path(name) for name in names])
+        if changed:
+            shown = [
+                Path(path).relative_to(self.project.root).as_posix() for path in changed
+            ]
+            return Result(detail="reformatted " + ", ".join(shown))
+        return Result(detail="already formatted")
+
+    def lint_fragments(self):
+        fragments = self.project.read_fragments()
+        files = dict(zip(self.project.fragment_files, fragments, strict=True))
+        errors = format_errors(files)
+        error = check_fragments(*fragments)
+        return Result(errors=[*errors, *([error] if error else [])])
 
     def credentials(self, session_required=True):
         if self._sources is None:
@@ -117,16 +116,22 @@ class Session:
         if self.live:
             self.assembled = self.remote
         else:
-            self.assembled = assemble(self.remote, *read_fragments())
+            self.assembled = assemble(self.remote, *self.project.read_fragments())
         return Result()
 
     def fragment_texts(self):
         """The three fragments being judged: your files, or the live blocks."""
-        return live_fragments(self.assembled) if self.live else read_fragments()
+        return (
+            live_fragments(self.assembled)
+            if self.live
+            else self.project.read_fragments()
+        )
 
     def rules_files(self):
         """name -> text of the rules being judged."""
-        return dict(zip(fragment_files(), self.fragment_texts(), strict=True))
+        return dict(
+            zip(self.project.fragment_files, self.fragment_texts(), strict=True)
+        )
 
     def folder_sources(self):
         """name -> text to look for folder references in."""
@@ -146,13 +151,15 @@ class Session:
         return Result(errors=_errors(check_markers(self.assembled)))
 
     def _variable_report(self):
-        return load_report(self.assembled, self.fragment_texts())
+        return load_report(self.project, self.assembled, self.fragment_texts())
 
     def check_variables(self):
         return Result(errors=self._variable_report().errors)
 
     def warnings(self, strict=False):
-        rules = build_rules(self.rules_files(), self.assembled, load_variable_docs())
+        rules = build_rules(
+            self.rules_files(), self.assembled, load_variable_docs(self.project)
+        )
         found = collect_warnings(
             rules, disabled_ui_rules(self.assembled), self._variable_report().warnings
         )
@@ -163,7 +170,7 @@ class Session:
 
     def push(self):
         script = require(self.script, "The remote script")
-        updated = script.with_fragments(*read_fragments())
+        updated = script.with_fragments(*self.project.read_fragments())
         if updated.same_blocks(script):
             return Result(detail="no change; nothing to push")
         if not get_script(self.credentials()).same_blocks(script):
@@ -172,7 +179,7 @@ class Session:
         return Result(detail="pushed the managed blocks")
 
     def verify(self):
-        if not get_script(self.credentials()).matches(read_fragments()):
+        if not get_script(self.credentials()).matches(self.project.read_fragments()):
             return Result(
                 errors=["Fastmail's managed blocks differ from the local fragments"]
             )
@@ -182,8 +189,8 @@ class Session:
 class FolderChecks:
     """The two folder steps share one read of Fastmail's folders."""
 
-    def __init__(self, session=None):
-        self._session = session or Session()
+    def __init__(self, session):
+        self._session = session
         self._mailboxes = None
 
     def _fragments(self):
@@ -213,7 +220,14 @@ def _count(count, one, many):
 
 
 def lint_steps(
-    session=None, *, offline=False, from_file=None, fix=False, strict=False, live=False
+    project,
+    session=None,
+    *,
+    offline=False,
+    from_file=None,
+    fix=False,
+    strict=False,
+    live=False,
 ):
     """Every check, in order. `offline` skips whatever needs Fastmail (everything
     but your rules, unless `from_file` supplies the script); `fix` formats first.
@@ -224,11 +238,13 @@ def lint_steps(
         raise RuntimeError(
             "--live needs Fastmail: give --from-file to check a saved copy"
         )
-    session = session or Session(live=live)
+    session = session or Session(project, live=live)
     scope = "live script" if live else "assembled script"
-    steps = [Step("Format your rules", _format_rules)] if fix else []
+    steps = [Step("Format your rules", session.format_rules)] if fix else []
     if not live:
-        steps.append(Step("Valid format and syntax in your rules", _lint_fragments))
+        steps.append(
+            Step("Valid format and syntax in your rules", session.lint_fragments)
+        )
     if offline and not from_file:
         return steps
     if from_file:
@@ -259,8 +275,7 @@ def lint_steps(
     return steps
 
 
-def write_steps(session=None):
-    session = session or Session()
+def write_steps(session):
     return [
         Step("Push the managed blocks", session.push, slow=True),
         Step("Verify with a fresh pull", session.verify, slow=True),

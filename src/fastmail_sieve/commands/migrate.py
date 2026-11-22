@@ -14,7 +14,7 @@ def add_parser(subparsers):
     parser.set_defaults(run=run)
 
 
-def run(args):
+def run(args, project):
     result = migrate(load_remote(args.from_file, progress_console()))
     for title in result.skipped:
         print(f"skipped (disabled in Fastmail): {title}", file=sys.stderr)

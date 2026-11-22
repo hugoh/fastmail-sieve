@@ -13,7 +13,7 @@ from fastmail_sieve.sieve.report import (
     disabled_ui_rules,
     render,
 )
-from fastmail_sieve.sieve.script import fragment_files, live_fragments, read_fragments
+from fastmail_sieve.sieve.script import live_fragments
 from fastmail_sieve.sieve.variables import load_report, load_variable_docs
 from fastmail_sieve.sieve.variables import render as render_variables
 from fastmail_sieve.ui.tables import terminal_width, use_color
@@ -40,16 +40,18 @@ def add_parser(subparsers):
     parser.set_defaults(run=run)
 
 
-def run(args):
+def run(args, project):
     console = progress_console()
     script = (
         load_remote(args.from_file, console)
         if args.live
-        else load_assembled(args.from_file, console)
+        else load_assembled(project, args.from_file, console)
     )
     width, color = terminal_width(args.width), use_color(args.color)
     if args.topic == "variables":
-        report = load_report(script, live_fragments(script) if args.live else None)
+        report = load_report(
+            project, script, live_fragments(script) if args.live else None
+        )
         print(render_variables(report, width, color))
         for warning in report.warnings:
             print(f"warning: {warning}", file=sys.stderr)
@@ -57,10 +59,13 @@ def run(args):
             print(f"error: {error}", file=sys.stderr)
         return 0
     if args.topic == "script":
-        rules, sequence = build_full_rules(script, load_variable_docs()), True
+        rules, sequence = build_full_rules(script, load_variable_docs(project)), True
     else:
-        texts = live_fragments(script) if args.live else read_fragments()
-        fragments = dict(zip(fragment_files(), texts, strict=True))
-        rules, sequence = build_rules(fragments, script, load_variable_docs()), False
+        texts = live_fragments(script) if args.live else project.read_fragments()
+        fragments = dict(zip(project.fragment_files, texts, strict=True))
+        rules, sequence = (
+            build_rules(fragments, script, load_variable_docs(project)),
+            False,
+        )
     print(render(rules, width, color, disabled_ui_rules(script), sequence))
     return 0

@@ -19,8 +19,8 @@ def add_parser(subparsers):
     parser.set_defaults(run=run)
 
 
-def run(args):
-    text = load_assembled(args.from_file, progress_console())
+def run(args, project):
+    text = load_assembled(project, args.from_file, progress_console())
     if args.output:
         Path(args.output).write_text(text, encoding="utf-8")
     else:

@@ -12,5 +12,5 @@ def add_parser(subparsers):
     parser.set_defaults(run=run)
 
 
-def run(args):
-    return run_steps(doctor_steps(Doctor()), Console(highlight=False))
+def run(args, project):
+    return run_steps(doctor_steps(Doctor(project)), Console(highlight=False))

@@ -1,6 +1,5 @@
 import argparse
 import http.client
-import os
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -71,22 +70,23 @@ def build_parser():
     return parser
 
 
-def enter_project(args):
-    """Move to the project root and load its config; `init` starts where it is told."""
+def find_project(args):
+    """The project to work on, without changing directory: where `-C` says (or the
+    current directory), or, except for `init`, the nearest project above it."""
+    start = Path.cwd()
     if args.project:
-        target = Path(args.project)
-        if not target.is_dir():
+        start = Path(args.project)
+        if not start.is_dir():
             raise RuntimeError(f"{args.project} is not a directory")
-        os.chdir(target)
+        start = start.resolve()
     if args.command == "init":
-        config.use(config.load_config(Path.cwd()))
-        return
-    root = config.find_root(Path.cwd())
-    if root:
-        if root != Path.cwd():
-            print(f"using the project at {root}", file=sys.stderr)
-        os.chdir(root)
-        config.use(config.load_config(root))
+        return config.Project.load(start)
+    root = config.find_root(start)
+    if root is None:
+        return config.Project(start)
+    if root != start:
+        print(f"using the project at {root}", file=sys.stderr)
+    return config.Project.load(root)
 
 
 def main(argv=None):
@@ -96,8 +96,7 @@ def main(argv=None):
         parser.print_help(sys.stderr)
         return 2
     try:
-        enter_project(args)
-        return args.run(args)
+        return args.run(args, find_project(args))
     except (RuntimeError, OSError, ValueError, http.client.HTTPException) as error:
         print(f"✗ {error}", file=sys.stderr)
         return 1

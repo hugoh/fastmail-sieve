@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from fastmail_sieve.commands._options import confirm
 from fastmail_sieve.fastmail.blocks import CHANGED, get_script, set_blocks
 from fastmail_sieve.fastmail.credentials import LazySources, pick
@@ -84,10 +82,10 @@ def _convert_markers(args, credentials, script):
     return 0
 
 
-def run(args):
+def run(args, project):
     if args.convert_markers and not args.remote:
         raise RuntimeError("--convert-markers needs --remote")
-    created, kept = scaffold(Path.cwd())
+    created, kept = scaffold(project)
     for name in created:
         print(f"created {name}")
     for name in kept:

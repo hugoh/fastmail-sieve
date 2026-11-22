@@ -80,7 +80,7 @@ def clean_cookie(raw):
     return raw.strip().removeprefix("Cookie:").strip()
 
 
-def run(args):
+def run(args, project):
     console = progress_console()
     token, cookie = _collect(args)
     username = _username(token, cookie)
@@ -93,7 +93,7 @@ def run(args):
     return 0
 
 
-def run_clear(args):
+def run_clear(args, project):
     removed = delete_keychain()
     if removed:
         print(f"✓ Removed {removed} stored credential entries from the keychain")
@@ -140,7 +140,7 @@ def _use(gathered, session_required):
     return chosen, f"{TIER_LABELS[chosen['kind']]} from {chosen['source']}"
 
 
-def run_status(args):
+def run_status(args, project):
     statuses = inspect_sources()
     print("Credential sources, in the order they are tried:")
     for index, status in enumerate(statuses, start=1):

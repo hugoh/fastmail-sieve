@@ -50,8 +50,8 @@ class LoadTest(InTempDir):
     def test_assembled_puts_the_local_fragments_into_the_remote_script(self):
         Path("copy.sieve").write_text(skeleton("old;\n", "old;\n", "old;\n"))
         fragments = ("new top;\n", "new middle;\n", "new bottom;\n")
-        with mock.patch("fastmail_sieve.remote.read_fragments", return_value=fragments):
-            text = load_assembled("copy.sieve")
+        project = mock.Mock(read_fragments=mock.Mock(return_value=fragments))
+        text = load_assembled(project, "copy.sieve")
         self.assertIn("new top;\n", text)
         self.assertNotIn("old;", text)
 

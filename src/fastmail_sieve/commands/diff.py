@@ -2,7 +2,7 @@ import difflib
 
 from fastmail_sieve.commands._options import add_from_file, progress_console
 from fastmail_sieve.remote import load_remote
-from fastmail_sieve.sieve.script import assemble, read_fragments
+from fastmail_sieve.sieve.script import assemble
 from fastmail_sieve.ui.tables import safe_text
 
 
@@ -23,9 +23,9 @@ def unified(remote, local):
     )
 
 
-def run(args):
+def run(args, project):
     remote = load_remote(args.from_file, progress_console())
-    lines = unified(remote, assemble(remote, *read_fragments()))
+    lines = unified(remote, assemble(remote, *project.read_fragments()))
     if lines:
         print(safe_text("\n".join(lines)))
     return 0

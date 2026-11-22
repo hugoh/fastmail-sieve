@@ -1,15 +1,13 @@
 import re
 import tomllib
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from rich import box
 from rich.table import Table
 from sievelib.parser import Parser
 
-from fastmail_sieve import config
 from fastmail_sieve.sieve import lint as check_sieve  # noqa: F401  (registers the Fastmail command extensions)
-from fastmail_sieve.sieve.script import mentions_marker, read_fragments
+from fastmail_sieve.sieve.script import mentions_marker
 from fastmail_sieve.sieve.variable_docs import load_descriptions, lookup  # noqa: F401
 from fastmail_sieve.sieve.wording import headings
 from fastmail_sieve.ui.tables import DEFAULT_WIDTH, cell, render_table
@@ -28,15 +26,14 @@ class Variable:
     read_by: list = field(default_factory=list)
 
 
+DEFAULT_DOCS_FILE = "variables.toml"
+
+
 @dataclass
 class Report:
     variables: dict
     errors: list
     warnings: list
-
-
-def descriptions_file():
-    return config.current().variables_file
 
 
 def _strings(value):
@@ -124,7 +121,7 @@ def _describe(name, descriptions):
     return entry.get("description"), bool(entry.get("may_be_unset"))
 
 
-def analyze(text, descriptions, scope=None):
+def analyze(text, descriptions, scope=None, docs_name=DEFAULT_DOCS_FILE):
     parser = Parser()
     if not parser.parse(text):
         raise ValueError(parser.error)
@@ -153,13 +150,13 @@ def analyze(text, descriptions, scope=None):
         if scope is not None and name not in scope:
             continue
         if variable.description is None:
-            errors.append(f"{name}: no description in {descriptions_file()}")
+            errors.append(f"{name}: no description in {docs_name}")
         if variable.read_by and not variable.set_by and not variable.may_be_unset:
             errors.append(f"{name}: read but never set")
         if variable.set_by and not variable.read_by:
             errors.append(f"{name}: set but never read")
     warnings = [
-        f"{name}: described in {descriptions_file()} but not in the script"
+        f"{name}: described in {docs_name} but not in the script"
         for name in sorted(descriptions)
         if name not in variables
     ]
@@ -189,10 +186,10 @@ def render(report, width=DEFAULT_WIDTH, color=False):
     return "\n".join(render_table(table, width, color))
 
 
-def load_variable_docs():
-    path = descriptions_file()
+def load_variable_docs(project):
+    path = project.variables_file
     try:
-        text = Path(path).read_text(encoding="utf-8")
+        text = project.path(path).read_text(encoding="utf-8")
     except FileNotFoundError as error:
         raise RuntimeError(
             f"{path} not found: create it with `fastmail-sieve init`"
@@ -203,10 +200,13 @@ def load_variable_docs():
         raise RuntimeError(f"{path}: {error}") from error
 
 
-def load_report(script_text, fragments=None):
+def load_report(project, script_text, fragments=None):
     """The variable report; `fragments` (default: your local ones) say which names
     your own rules set."""
-    fragments = read_fragments() if fragments is None else fragments
+    fragments = project.read_fragments() if fragments is None else fragments
     return analyze(
-        script_text, load_variable_docs(), fragment_variable_names(fragments)
+        script_text,
+        load_variable_docs(project),
+        fragment_variable_names(fragments),
+        project.variables_file,
     )

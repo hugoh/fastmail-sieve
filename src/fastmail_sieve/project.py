@@ -1,4 +1,4 @@
-from fastmail_sieve import config as config_module
+from fastmail_sieve.config import FRAGMENT_NAMES
 
 FRAGMENT_HEADERS = {
     "top": "# Rules that run first, before Fastmail's blocked-sender and spam handling.\n",
@@ -34,19 +34,17 @@ def _gitignore(root):
     return True
 
 
-def scaffold(root, current=None):
+def scaffold(project):
     """Create the files of a rules project that do not exist yet; never overwrite one."""
-    current = current or config_module.current()
+    root = project.root
     files = {
         path: FRAGMENT_HEADERS[name]
-        for name, path in zip(
-            config_module.FRAGMENT_NAMES, current.fragment_files, strict=True
-        )
+        for name, path in zip(FRAGMENT_NAMES, project.fragment_files, strict=True)
     }
-    files[current.variables_file] = VARIABLES_TEMPLATE
+    files[project.variables_file] = VARIABLES_TEMPLATE
     created, kept = [], []
     for relative, content in files.items():
-        target = root / relative
+        target = project.path(relative)
         if target.exists():
             kept.append(relative)
             continue

@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from fastmail_sieve import config
 from fastmail_sieve.cli import main
+from fastmail_sieve.config import Project
 from fastmail_sieve.fastmail.blocks import RemoteScript
 from fastmail_sieve.project import scaffold
 from tests.test_blocks import EMPTY, block, old_block
@@ -20,12 +20,11 @@ class InTempDir(unittest.TestCase):
         previous = os.getcwd()
         os.chdir(directory.name)
         self.addCleanup(os.chdir, previous)
-        self.addCleanup(config.use, config.Config())
 
 
 class ScaffoldTest(InTempDir):
     def test_creates_the_fragments_variables_and_gitignore(self):
-        created, kept = scaffold(Path("."))
+        created, kept = scaffold(Project(Path.cwd()))
         self.assertEqual(kept, [])
         for name in (
             "rules/top.sieve",
@@ -39,7 +38,7 @@ class ScaffoldTest(InTempDir):
         self.assertIn("rules.sieve", Path(".gitignore").read_text().splitlines())
 
     def test_fragments_are_valid_sieve_comments(self):
-        scaffold(Path("."))
+        scaffold(Project(Path.cwd()))
         for name in ("top", "middle", "bottom"):
             text = Path(f"rules/{name}.sieve").read_text()
             self.assertTrue(text.startswith("#"), name)
@@ -48,21 +47,21 @@ class ScaffoldTest(InTempDir):
     def test_never_overwrites_existing_files(self):
         Path("rules").mkdir()
         Path("rules/middle.sieve").write_text("keep;\n")
-        created, kept = scaffold(Path("."))
+        created, kept = scaffold(Project(Path.cwd()))
         self.assertEqual(Path("rules/middle.sieve").read_text(), "keep;\n")
         self.assertIn("rules/middle.sieve", kept)
         self.assertNotIn("rules/middle.sieve", created)
 
     def test_a_second_run_changes_nothing(self):
-        scaffold(Path("."))
-        created, kept = scaffold(Path("."))
+        scaffold(Project(Path.cwd()))
+        created, kept = scaffold(Project(Path.cwd()))
         self.assertEqual(created, [])
         self.assertEqual(len(kept), 5)
 
     def test_an_existing_gitignore_gets_the_line_appended_once(self):
         Path(".gitignore").write_text("*.pyc\n")
-        scaffold(Path("."))
-        scaffold(Path("."))
+        scaffold(Project(Path.cwd()))
+        scaffold(Project(Path.cwd()))
         self.assertEqual(
             Path(".gitignore").read_text().splitlines(), ["*.pyc", "rules.sieve"]
         )
@@ -71,7 +70,7 @@ class ScaffoldTest(InTempDir):
         Path("fastmail-sieve.toml").write_text(
             'rules-dir = "sieve"\nvariables-file = "vars.toml"\n'
         )
-        created, _ = scaffold(Path("."), config.load_config(Path(".").resolve()))
+        created, _ = scaffold(Project.load(Path.cwd()))
         self.assertIn("sieve/top.sieve", created)
         self.assertIn("vars.toml", created)
 

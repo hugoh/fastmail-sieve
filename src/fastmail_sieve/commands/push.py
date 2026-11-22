@@ -32,10 +32,10 @@ def _show(lines, console):
         console.print(safe_text(line), style=style, markup=False)
 
 
-def run(args):
+def run(args, project):
     console = Console(highlight=False)
-    session = Session()
-    code = run_steps(lint_steps(session, strict=args.strict), console)
+    session = Session(project)
+    code = run_steps(lint_steps(project, session, strict=args.strict), console)
     if code:
         return code
     changes = unified(session.remote, session.assembled)

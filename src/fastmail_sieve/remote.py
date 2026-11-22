@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastmail_sieve.fastmail.blocks import get_script
 from fastmail_sieve.fastmail.credentials import load_credentials
-from fastmail_sieve.sieve.script import assemble, read_fragments
+from fastmail_sieve.sieve.script import assemble
 
 
 def fetch_script():
@@ -23,6 +23,6 @@ def load_remote(from_file=None, console=None):
         return fetch_script()
 
 
-def load_assembled(from_file=None, console=None):
+def load_assembled(project, from_file=None, console=None):
     """The remote script with your local fragments in its managed blocks."""
-    return assemble(load_remote(from_file, console), *read_fragments())
+    return assemble(load_remote(from_file, console), *project.read_fragments())

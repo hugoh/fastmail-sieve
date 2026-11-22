@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from fastmail_sieve import config
+from fastmail_sieve.config import Project as RulesProject
 from fastmail_sieve.doctor import Doctor, doctor_steps
 from tests.support import SESSION as BASE_SESSION
 from tests.support import FastmailCase
@@ -42,11 +42,10 @@ class Project(unittest.TestCase):
         previous = os.getcwd()
         os.chdir(directory.name)
         self.addCleanup(os.chdir, previous)
-        self.addCleanup(config.use, config.Config())
 
 
 def doctor(sources):
-    instance = Doctor()
+    instance = Doctor(RulesProject(Path.cwd()))
     patcher = mock.patch("fastmail_sieve.doctor.gather", return_value=sources)
     patcher.start()
     return instance, patcher
@@ -58,14 +57,14 @@ class ProjectFilesTest(Project):
         for name in ("top", "middle", "bottom"):
             Path(f"rules/{name}.sieve").write_text("")
         Path("variables.toml").write_text("")
-        result = Doctor().project()
+        result = Doctor(RulesProject(Path.cwd())).project()
         self.assertEqual(result.errors, [])
         self.assertIn("3 fragments", result.detail)
 
     def test_missing_files_are_listed_with_the_fix(self):
         Path("rules").mkdir()
         Path("rules/top.sieve").write_text("")
-        result = Doctor().project()
+        result = Doctor(RulesProject(Path.cwd())).project()
         self.assertIn("rules/middle.sieve is missing", result.errors)
         self.assertIn("rules/bottom.sieve is missing", result.errors)
         self.assertTrue(any("fastmail-sieve init" in error for error in result.errors))
@@ -171,7 +170,7 @@ class NetworkStepsTest(FastmailCase):
 
     def test_the_checklist_names(self):
         self.assertEqual(
-            [step.name for step in doctor_steps(Doctor())],
+            [step.name for step in doctor_steps(Doctor(RulesProject(Path.cwd())))],
             [
                 "Project files found",
                 "Credentials found",

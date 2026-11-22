@@ -1,7 +1,7 @@
 import os
 import stat
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 
 CONFIG_FILE = "fastmail-sieve.toml"
@@ -17,18 +17,6 @@ class Config:
     @property
     def fragment_files(self):
         return tuple(f"{self.rules_dir}/{name}.sieve" for name in FRAGMENT_NAMES)
-
-
-_current = Config()
-
-
-def current():
-    return _current
-
-
-def use(config):
-    global _current
-    _current = config
 
 
 def _trusted(directory):
@@ -96,3 +84,40 @@ def load_config(root):
             data.get("variables-file", defaults.variables_file),
         ),
     )
+
+
+@dataclass(frozen=True)
+class Project:
+    """A rules project: its root directory and its config. Every project file is
+    reached through here, so nothing depends on the working directory."""
+
+    root: Path
+    config: Config = field(default_factory=Config)
+
+    @classmethod
+    def load(cls, root):
+        root = Path(root)
+        return cls(root, load_config(root))
+
+    @property
+    def fragment_files(self):
+        """The three fragment files, named relative to the root (as shown to users)."""
+        return self.config.fragment_files
+
+    @property
+    def variables_file(self):
+        return self.config.variables_file
+
+    def path(self, name):
+        return self.root / name
+
+    def read_fragments(self):
+        names = self.fragment_files
+        try:
+            return tuple(self.path(name).read_text(encoding="utf-8") for name in names)
+        except FileNotFoundError as error:
+            missing = Path(error.filename).relative_to(self.root).as_posix()
+            raise RuntimeError(
+                f"{missing} not found: run from your rules project (or use -C DIR), "
+                "or create one with `fastmail-sieve init`"
+            ) from error
