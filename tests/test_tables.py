@@ -89,7 +89,8 @@ class MakeConsoleTest(unittest.TestCase):
 
     @mock.patch.dict(os.environ, {}, clear=True)
     def test_output_that_is_not_a_terminal_gets_100_columns(self):
-        self.assertEqual(make_console().width, 100)
+        with mock.patch("sys.stdout", io.StringIO()):
+            self.assertEqual(make_console().width, 100)
 
     def test_it_can_write_to_standard_error(self):
         self.assertTrue(make_console(stderr=True).stderr)
