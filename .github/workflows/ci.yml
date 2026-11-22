@@ -1,18 +1,21 @@
 ---
-name: release
+name: ci
 
 on:
   push:
     branches:
       - main
+  pull_request:
 
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-caller-${{ github.ref }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-caller-${{ github.event.pull_request.number || github.ref }}
+  # Cancel superseded PR runs; never cancel a push-to-main run mid-release.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # hk runs lint, type checks, the unit tests and package-check (the `ci` profile).
   hk:
     uses: hugoh/gh-workflows/.github/workflows/hk.yml@0fb46042e4562ccf11f83bacc6c916d281379700 # v1.40.25
     permissions:
@@ -20,8 +23,23 @@ jobs:
       packages: read
       statuses: write
 
+  # The single required status check, and the only thing `release` waits for.
+  # Every job that must pass before merging or releasing goes in `needs`; the
+  # release jobs below are downstream of it and must not be listed here.
+  ci-gate:
+    if: always()
+    needs: [hk]
+    timeout-minutes: 2
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
+        with:
+          jobs: ${{ toJSON(needs) }}
+
   release:
-    needs: hk
+    needs: ci-gate
+    if: github.event_name == 'push'
     uses: hugoh/gh-workflows/.github/workflows/release.yml@0fb46042e4562ccf11f83bacc6c916d281379700 # v1.40.25
     permissions:
       contents: write
