@@ -35,18 +35,22 @@ def run_main(*argv):
     return code, out.getvalue(), err.getvalue()
 
 
-def parse(command, *argv, before=()):
-    """The options a command receives for this command line (its `run` is stubbed)."""
+def parse_with_find(command, *argv, before=()):
+    """The options a command receives for this command line (its `run` is stubbed),
+    and the mock standing for the project lookup."""
     with (
         mock.patch(f"fastmail_sieve.commands.{command}.run", return_value=0) as run,
         mock.patch("fastmail_sieve.cli.find_project", return_value=PROJECT) as find,
     ):
         code = main([*before, command, *argv])
     assert code == 0, (command, argv, code)
-    parse.find = find
     [args, project] = run.call_args.args
     assert project is PROJECT
-    return args
+    return args, find
+
+
+def parse(command, *argv, before=()):
+    return parse_with_find(command, *argv, before=before)[0]
 
 
 class ParserTest(unittest.TestCase):
@@ -110,12 +114,12 @@ class ParserTest(unittest.TestCase):
         self.assertFalse(parse("init").convert_markers)
 
     def test_the_project_option(self):
-        parse("lint", before=("-C", "somewhere"))
-        parse.find.assert_called_once_with("somewhere", "lint")
-        parse("lint", before=("--project", "elsewhere"))
-        parse.find.assert_called_with("elsewhere", "lint")
-        parse("lint")
-        parse.find.assert_called_with(None, "lint")
+        _, find = parse_with_find("lint", before=("-C", "somewhere"))
+        find.assert_called_once_with("somewhere", "lint")
+        _, find = parse_with_find("lint", before=("--project", "elsewhere"))
+        find.assert_called_once_with("elsewhere", "lint")
+        _, find = parse_with_find("lint")
+        find.assert_called_once_with(None, "lint")
 
     def test_assemble_output(self):
         self.assertEqual(

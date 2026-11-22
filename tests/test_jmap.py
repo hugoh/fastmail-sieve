@@ -2,6 +2,7 @@ import json
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import cast
 from unittest import mock
 
 import requests
@@ -71,13 +72,15 @@ class JmapTest(HttpCase):
         self.assertEqual(request.headers["Authorization"], "Bearer fma1-secret")
         self.assertEqual(request.headers["Cookie"], "__Http-s_x=y")
         self.assertEqual(request.headers["Content-Type"], "application/json")
-        self.assertEqual(json.loads(request.body), {"a": 1})
+        body = request.body
+        assert isinstance(body, bytes)
+        self.assertEqual(json.loads(body), {"a": 1})
 
     def test_it_says_who_it_is(self):
         self.reply({"ok": True})
         jmap(API, CREDS)
         headers = self.http.calls[0].request.headers
-        self.assertRegex(headers["User-Agent"], r"^fastmail-sieve")
+        self.assertRegex(str(headers["User-Agent"]), r"^fastmail-sieve")
         self.assertEqual(headers["Accept"], "application/json")
 
     def test_an_api_token_has_no_cookie_header(self):
@@ -356,9 +359,18 @@ class ReadOnlyTest(unittest.TestCase):
                 self.assertFalse(jmap_module.is_read_only(body))
 
 
+class ScriptedServer(ThreadingHTTPServer):
+    """A local server that answers from a script and remembers what it was asked."""
+
+    def __init__(self, address, handler):
+        super().__init__(address, handler)
+        self.seen: list = []
+        self.script: list = []
+
+
 class Scripted(BaseHTTPRequestHandler):
     def _answer(self):
-        server = self.server
+        server = cast(ScriptedServer, self.server)
         length = int(self.headers.get("Content-Length") or 0)
         server.seen.append((self.command, self.rfile.read(length)))
         status, headers, body = server.script.pop(0)
@@ -374,7 +386,7 @@ class Scripted(BaseHTTPRequestHandler):
 
     do_GET = do_POST = _answer
 
-    def log_message(self, *args):
+    def log_message(self, format, *args):
         pass
 
 
@@ -385,8 +397,7 @@ class RetryTest(unittest.TestCase):
     def setUp(self):
         jmap_module._sessions_by_policy.clear()
         self.addCleanup(jmap_module._sessions_by_policy.clear)
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Scripted)
-        self.server.seen, self.server.script = [], []
+        self.server = ScriptedServer(("127.0.0.1", 0), Scripted)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)

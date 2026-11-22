@@ -52,6 +52,15 @@ dev = [
 requires = ["hatch-vcs", "hatchling"]
 build-backend = "hatchling.build"
 
+[tool.coverage.run]
+branch = true
+source = ["src/fastmail_sieve"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_empty = true
+
 [tool.hatch.version]
 source = "vcs"
 fallback-version = "0.0.0"
@@ -72,12 +81,3 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
 ignore = ["E501"]
-
-[tool.coverage.run]
-branch = true
-source = ["src/fastmail_sieve"]
-
-[tool.coverage.report]
-fail_under = 90
-show_missing = true
-skip_empty = true
