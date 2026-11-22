@@ -93,6 +93,15 @@ class AuthCommandTest(unittest.TestCase):
         creds = validate.call_args.args[1]
         self.assertEqual((creds["token"], creds["cookie"]), (TOKEN, COOKIE))
 
+    def test_an_answer_without_a_username_is_explained_and_stores_nothing(self):
+        code, output, _, store = self.run_auth(
+            prompts=[TOKEN, COOKIE], validate=mock.Mock(return_value={})
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("username", output)
+        self.assertNotIn("Traceback", output)
+        store.assert_not_called()
+
     def test_without_stdin_it_prompts_with_hidden_input(self):
         code, output, _, store = self.run_auth(prompts=[TOKEN, COOKIE])
         self.assertEqual(code, 0)
@@ -124,9 +133,10 @@ class AuthCommandTest(unittest.TestCase):
         self.assertIn("no usable keychain", output)
 
     def test_there_is_no_discover_option(self):
-        with self.assertRaises(SystemExit) as raised:
-            self.run_auth("--discover", prompts=[TOKEN])
-        self.assertEqual(raised.exception.code, 2)
+        code, output, _, store = self.run_auth("--discover", prompts=[TOKEN])
+        self.assertEqual(code, 2)
+        self.assertIn("--discover", output)
+        store.assert_not_called()
 
 
 if __name__ == "__main__":

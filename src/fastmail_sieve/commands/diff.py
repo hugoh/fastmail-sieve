@@ -1,16 +1,23 @@
 import difflib
 
-from fastmail_sieve.commands._options import add_from_file, progress_console
+import click
+
+from fastmail_sieve.commands._options import (
+    from_file_option,
+    invoke,
+    progress_console,
+)
 from fastmail_sieve.remote import load_remote
-from fastmail_sieve.sieve.script import assemble, read_fragments
+from fastmail_sieve.sieve.script import assemble
+from fastmail_sieve.ui.tables import echo
 
 
-def add_parser(subparsers):
-    parser = subparsers.add_parser(
-        "diff", help="show what a push would change on Fastmail"
-    )
-    add_from_file(parser)
-    parser.set_defaults(run=run)
+@click.command("diff", short_help="show what a push would change on Fastmail")
+@from_file_option()
+@click.pass_context
+def command(ctx, **options):
+    """Show what a push would change on Fastmail."""
+    invoke(ctx, run, options)
 
 
 def unified(remote, local):
@@ -22,9 +29,9 @@ def unified(remote, local):
     )
 
 
-def run(args):
+def run(args, project):
     remote = load_remote(args.from_file, progress_console())
-    lines = unified(remote, assemble(remote, *read_fragments()))
+    lines = unified(remote, assemble(remote, *project.read_fragments()))
     if lines:
-        print("\n".join(lines))
+        echo("\n".join(lines))
     return 0

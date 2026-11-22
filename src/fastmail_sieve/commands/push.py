@@ -1,22 +1,21 @@
-from rich.console import Console
+import click
 
-from fastmail_sieve.commands._options import confirm
+from fastmail_sieve.commands._options import confirm, invoke
 from fastmail_sieve.commands.diff import unified
 from fastmail_sieve.steps import Session, lint_steps, run_steps, write_steps
+from fastmail_sieve.ui.tables import make_console, safe_text
 
 
-def add_parser(subparsers):
-    parser = subparsers.add_parser(
-        "push",
-        help="check everything, show what changes, then push your rules to Fastmail",
-    )
-    parser.add_argument(
-        "--yes", action="store_true", help="push without asking for confirmation"
-    )
-    parser.add_argument(
-        "--strict", action="store_true", help="do not push while there are warnings"
-    )
-    parser.set_defaults(run=run)
+@click.command(
+    "push",
+    short_help="check everything, show what changes, then push your rules to Fastmail",
+)
+@click.option("--yes", is_flag=True, help="push without asking for confirmation")
+@click.option("--strict", is_flag=True, help="do not push while there are warnings")
+@click.pass_context
+def command(ctx, **options):
+    """Check everything, show what changes, then push your rules to Fastmail."""
+    invoke(ctx, run, options)
 
 
 def _show(lines, console):
@@ -28,13 +27,13 @@ def _show(lines, console):
                 "red" if line.startswith("-") and not line.startswith("---") else "dim"
             )
         )
-        console.print(line, style=style, markup=False)
+        console.print(safe_text(line), style=style, markup=False)
 
 
-def run(args):
-    console = Console(highlight=False)
-    session = Session()
-    code = run_steps(lint_steps(session, strict=args.strict), console)
+def run(args, project):
+    console = make_console()
+    session = Session(project)
+    code = run_steps(lint_steps(project, session, strict=args.strict), console)
     if code:
         return code
     changes = unified(session.remote, session.assembled)

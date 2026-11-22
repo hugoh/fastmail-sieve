@@ -1,10 +1,11 @@
-import argparse
-import os
-import sys
+import http.client
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+import click
+
 from fastmail_sieve import commands, config
+from fastmail_sieve.ui.tables import echo
 
 PROG = "fastmail-sieve"
 
@@ -16,89 +17,92 @@ def package_version():
         return "unknown"
 
 
-class CommandRegistry:
-    """Registers each command but keeps it out of argparse's flat list, remembering
-    its summary so the help can show the commands grouped by purpose."""
+class GroupedGroup(click.Group):
+    """A command group whose help lists the commands by what they are for."""
 
-    def __init__(self, subparsers):
-        self._subparsers = subparsers
-        self.summaries = {}
-
-    def add_parser(self, name, help=None, **kwargs):
-        self.summaries[name] = help
-        kwargs.setdefault("description", help)
-        return self._subparsers.add_parser(name, help=argparse.SUPPRESS, **kwargs)
-
-
-def grouped_help(summaries):
-    lines = []
-    for title, modules in commands.GROUPS:
-        lines.append(f"{title}:")
-        for module in modules:
-            name = module.__name__.rsplit(".", 1)[-1]
-            lines.append(f"  {name:<10} {summaries[name]}")
-        lines.append("")
-    lines.append("Run `fastmail-sieve COMMAND --help` for a command's options.")
-    return "\n".join(lines)
+    def format_commands(self, ctx, formatter):
+        limit = formatter.width - 6 - max(len(name) for name in self.commands)
+        for title, modules in commands.GROUPS:
+            rows = [
+                (name, self.commands[name].get_short_help_str(limit))
+                for name in (module.command.name for module in modules)
+                if name
+            ]
+            with formatter.section(title):
+                formatter.write_dl(rows)
 
 
-def build_parser():
-    parser = argparse.ArgumentParser(
-        prog=PROG,
-        description="Keep Fastmail Sieve rules in git: lint, explain, migrate and sync.",
-        usage=f"{PROG} [-h] [--version] [-C DIR] COMMAND ...",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument(
-        "--version", action="version", version=f"{PROG} {package_version()}"
-    )
-    parser.add_argument(
-        "-C",
-        "--project",
-        metavar="DIR",
-        help="run as if started in DIR (default: the current directory, or the "
-        "nearest parent that has rules fragments or a fastmail-sieve.toml)",
-    )
-    registry = CommandRegistry(
-        parser.add_subparsers(
-            dest="command", metavar="COMMAND", help=argparse.SUPPRESS, prog=PROG
-        )
-    )
-    for command in commands.ALL:
-        command.add_parser(registry)
-    parser.epilog = grouped_help(registry.summaries)
-    return parser
+def _show_version(ctx, param, value):
+    if value:
+        click.echo(f"{PROG} {package_version()}")
+        ctx.exit()
 
 
-def enter_project(args):
-    """Move to the project root and load its config; `init` starts where it is told."""
-    if args.project:
-        target = Path(args.project)
-        if not target.is_dir():
-            raise RuntimeError(f"{args.project} is not a directory")
-        os.chdir(target)
-    if args.command == "init":
-        config.use(config.load_config(Path.cwd()))
-        return
-    root = config.find_root(Path.cwd())
-    if root:
-        if root != Path.cwd():
-            print(f"using the project at {root}", file=sys.stderr)
-        os.chdir(root)
-        config.use(config.load_config(root))
+@click.group(
+    cls=GroupedGroup,
+    name=PROG,
+    invoke_without_command=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+    epilog="Run `fastmail-sieve COMMAND --help` for a command's options.",
+)
+@click.option(
+    "--version",
+    is_flag=True,
+    is_eager=True,
+    expose_value=False,
+    callback=_show_version,
+    help="Show the version and exit.",
+)
+@click.option(
+    "-C",
+    "--project",
+    "project_dir",
+    metavar="DIR",
+    help="use the project in DIR (default: the current directory, or the nearest "
+    "parent that has rules fragments or a fastmail-sieve.toml)",
+)
+@click.pass_context
+def cli(ctx, project_dir):
+    """Keep Fastmail Sieve rules in git: lint, explain, migrate and sync."""
+    ctx.obj = lambda command_name: find_project(project_dir, command_name)
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help(), err=True)
+        ctx.exit(2)
+
+
+for _module in commands.ALL:
+    cli.add_command(_module.command)
+
+
+def find_project(directory, command_name):
+    """The project to work on, without changing directory: in `directory` (or the
+    current one) for `init`, otherwise the nearest project at or above it."""
+    start = Path.cwd()
+    if directory:
+        start = Path(directory)
+        if not start.is_dir():
+            raise RuntimeError(f"{directory} is not a directory")
+        start = start.resolve()
+    if command_name == "init":
+        return config.Project.load(start)
+    root = config.find_root(start)
+    if root is None:
+        return config.Project(start)
+    if root != start:
+        echo(f"using the project at {root}", err=True)
+    return config.Project.load(root)
 
 
 def main(argv=None):
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    if not getattr(args, "run", None):
-        parser.print_help(sys.stderr)
-        return 2
     try:
-        enter_project(args)
-        return args.run(args)
-    except (RuntimeError, OSError, ValueError) as error:
-        print(f"✗ {error}", file=sys.stderr)
+        return cli.main(args=argv, prog_name=PROG, standalone_mode=False) or 0
+    except click.ClickException as error:
+        error.show()
+        return error.exit_code
+    except click.Abort:
+        return 130
+    except (RuntimeError, OSError, ValueError, http.client.HTTPException) as error:
+        echo(f"✗ {error}", err=True, style="red")
         return 1
     except KeyboardInterrupt:
         return 130

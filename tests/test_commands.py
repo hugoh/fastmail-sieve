@@ -7,16 +7,18 @@ from pathlib import Path
 from unittest import mock
 
 from fastmail_sieve.cli import main
+from fastmail_sieve.config import Config
+from fastmail_sieve.config import Project as RulesProject
 from fastmail_sieve.sieve.lint import FASTMAIL_REQUIRE
 from fastmail_sieve.sieve.script import (
     MARKER_END,
     MARKER_START,
     assemble,
-    fragment_files,
 )
 from fastmail_sieve.steps import Result, Step
 from tests.test_sieve_blocks import skeleton
 
+FRAGMENTS = Config().fragment_files
 BLOCK = f"{MARKER_START}\n{MARKER_END}"
 REMOTE = f"{FASTMAIL_REQUIRE}{BLOCK}\n### blocked\n{BLOCK}\n### rules\n{BLOCK}\n"
 FILE_A_RULE = 'if address :is "from" "a@b.c" {\n  fileinto :mailboxid "P1" "INBOX.home";\n  stop;\n}\n'
@@ -42,10 +44,38 @@ class Project(unittest.TestCase):
         os.chdir(directory.name)
         self.addCleanup(os.chdir, previous)
         Path("rules").mkdir()
-        for name, text in zip(fragment_files(), ("", self.middle, ""), strict=True):
+        for name, text in zip(FRAGMENTS, ("", self.middle, ""), strict=True):
             Path(name).write_text(text)
         Path("variables.toml").write_text(self.variables)
         Path("remote.sieve").write_text(REMOTE)
+
+
+class TerminalSafetyTest(Project):
+    def hostile_remote(self, outside_the_blocks=False):
+        if outside_the_blocks:  # what `assemble` prints is Fastmail's own text
+            Path("remote.sieve").write_text(REMOTE + "# \x1b[2Jowned\n")
+            return
+        hostile = f"{MARKER_START}\n# \x1b[2Jowned\n{MARKER_END}"
+        Path("remote.sieve").write_text(REMOTE.replace(BLOCK, hostile, 1))
+
+    def test_diff_never_prints_control_characters(self):
+        self.hostile_remote()
+        code, out, _ = run("diff", "--from-file", "remote.sieve")
+        self.assertNotIn("\x1b", out)
+        self.assertIn("owned", out)
+
+    def test_assemble_to_a_terminal_strips_them(self):
+        self.hostile_remote(outside_the_blocks=True)
+        out = io.StringIO()
+        out.isatty = lambda: True
+        with contextlib.redirect_stdout(out):
+            main(["assemble", "--from-file", "remote.sieve"])
+        self.assertNotIn("\x1b", out.getvalue())
+
+    def test_assemble_into_a_pipe_is_byte_for_byte(self):
+        self.hostile_remote(outside_the_blocks=True)
+        code, out, _ = run("assemble", "--from-file", "remote.sieve")
+        self.assertIn("\x1b[2J", out)
 
 
 class LintFixTest(Project):
@@ -55,16 +85,14 @@ class LintFixTest(Project):
         code, out, _ = run("lint", "--offline")
         self.assertEqual(code, 1)
         self.assertIn("lint --fix", out)
-        self.assertEqual(Path(fragment_files()[1]).read_text(), self.middle)
+        self.assertEqual(Path(FRAGMENTS[1]).read_text(), self.middle)
 
     def test_fix_rewrites_the_fragments_and_then_checks_them(self):
         code, out, _ = run("lint", "--offline", "--fix")
         self.assertEqual(code, 0)
-        self.assertEqual(
-            Path(fragment_files()[1]).read_text(), "if true {\n  stop;\n}\n"
-        )
+        self.assertEqual(Path(FRAGMENTS[1]).read_text(), "if true {\n  stop;\n}\n")
         self.assertIn("Format your rules", out)
-        self.assertIn(fragment_files()[1], out)
+        self.assertIn(FRAGMENTS[1], out)
 
     def test_fix_on_formatted_rules_says_so_and_changes_nothing(self):
         run("lint", "--offline", "--fix")
@@ -124,7 +152,7 @@ class PullCommandTest(Project):
         return code, out + err, ask
 
     def files(self):
-        return [Path(name).read_text() for name in fragment_files()]
+        return [Path(name).read_text() for name in FRAGMENTS]
 
     def test_empty_fragments_are_filled_without_asking(self):
         code, _, ask = self.pull()
@@ -135,21 +163,21 @@ class PullCommandTest(Project):
     def test_the_untouched_scaffold_is_replaced_without_asking(self):
         from fastmail_sieve.project import scaffold
 
-        for name in fragment_files():
+        for name in FRAGMENTS:
             Path(name).unlink()
-        scaffold(Path("."))
+        scaffold(RulesProject(Path.cwd()))
         code, _, ask = self.pull()
         self.assertEqual((code, self.files()), (0, ["t;\n", "m;\n", "b;\n"]))
         ask.assert_not_called()
 
     def test_missing_files_are_created_without_asking(self):
-        Path(fragment_files()[2]).unlink()
+        Path(FRAGMENTS[2]).unlink()
         code, _, ask = self.pull()
         self.assertEqual((code, self.files()[2]), (0, "b;\n"))
         ask.assert_not_called()
 
     def test_nothing_to_do_when_they_already_match(self):
-        for name, text in zip(fragment_files(), ("t;\n", "m;\n", "b;\n"), strict=True):
+        for name, text in zip(FRAGMENTS, ("t;\n", "m;\n", "b;\n"), strict=True):
             Path(name).write_text(text)
         code, out, ask = self.pull()
         self.assertEqual(code, 0)
@@ -157,27 +185,27 @@ class PullCommandTest(Project):
         ask.assert_not_called()
 
     def test_local_changes_are_listed_and_need_a_yes(self):
-        Path(fragment_files()[1]).write_text("# my uncommitted edit\n")
+        Path(FRAGMENTS[1]).write_text("# my uncommitted edit\n")
         code, out, ask = self.pull(answer="y")
         self.assertEqual(code, 0)
         ask.assert_called_once()
-        self.assertIn(fragment_files()[1], out)
+        self.assertIn(FRAGMENTS[1], out)
         self.assertEqual(self.files()[1], "m;\n")
 
     def test_declining_leaves_every_file_untouched(self):
-        Path(fragment_files()[1]).write_text("# my uncommitted edit\n")
+        Path(FRAGMENTS[1]).write_text("# my uncommitted edit\n")
         code, out, _ = self.pull(answer="n")
         self.assertEqual(code, 1)
         self.assertIn("Not pulled", out)
         self.assertEqual(self.files(), ["", "# my uncommitted edit\n", ""])
 
     def test_no_answer_at_all_counts_as_no(self):
-        Path(fragment_files()[0]).write_text("# mine\n")
+        Path(FRAGMENTS[0]).write_text("# mine\n")
         code, _, _ = self.pull(answer="EOF")
         self.assertEqual((code, self.files()[0]), (1, "# mine\n"))
 
     def test_yes_replaces_without_asking(self):
-        Path(fragment_files()[1]).write_text("# my uncommitted edit\n")
+        Path(FRAGMENTS[1]).write_text("# my uncommitted edit\n")
         code, _, ask = self.pull("--yes")
         self.assertEqual((code, self.files()[1]), (0, "m;\n"))
         ask.assert_not_called()
@@ -239,10 +267,10 @@ class LiveTargetTest(Project):
         code, _, err = run("lint", "--live", "--fix", "--from-file", "live.sieve")
         self.assertEqual(code, 1)
         self.assertIn("--fix", err)
-        self.assertEqual(Path(fragment_files()[1]).read_text(), self.middle)
+        self.assertEqual(Path(FRAGMENTS[1]).read_text(), self.middle)
 
     def test_explain_live_shows_what_is_live_not_your_rules(self):
-        Path(fragment_files()[1]).write_text(FILE_A_RULE)
+        Path(FRAGMENTS[1]).write_text(FILE_A_RULE)
         self.save_live()
         code, out, _ = run(
             "explain", "--live", "--from-file", "live.sieve", "--color", "never"
@@ -252,7 +280,7 @@ class LiveTargetTest(Project):
         self.assertNotIn("a@b.c", out)
 
     def test_explain_without_live_shows_your_rules(self):
-        Path(fragment_files()[1]).write_text(FILE_A_RULE)
+        Path(FRAGMENTS[1]).write_text(FILE_A_RULE)
         self.save_live()
         _, out, _ = run("explain", "--from-file", "live.sieve", "--color", "never")
         self.assertIn("a@b.c", out)
@@ -408,9 +436,9 @@ class ExplainCommandTest(Project):
         self.assertIn("nope.sieve", err)
 
     def test_an_unknown_topic_is_a_usage_error(self):
-        with self.assertRaises(SystemExit) as raised:
-            self.explain("nope")
-        self.assertEqual(raised.exception.code, 2)
+        code, out, err = self.explain("nope")
+        self.assertEqual(code, 2)
+        self.assertIn("nope", err)
 
 
 class ExplainVariablesTest(Project):

@@ -1,9 +1,11 @@
 import contextlib
 import io
 import unittest
+from pathlib import Path
 from unittest import mock
 
-from fastmail_sieve.cli import build_parser, main
+from fastmail_sieve.cli import cli, main
+from fastmail_sieve.config import Project
 
 COMMANDS = {
     "assemble",
@@ -20,16 +22,40 @@ COMMANDS = {
 }
 
 
-def parse(*argv):
-    return build_parser().parse_args(argv)
+PROJECT = Project(Path("/project"))
+
+
+def run_main(*argv):
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            code = main(list(argv))
+        except SystemExit as exit_:
+            code = exit_.code
+    return code, out.getvalue(), err.getvalue()
+
+
+def parse_with_find(command, *argv, before=()):
+    """The options a command receives for this command line (its `run` is stubbed),
+    and the mock standing for the project lookup."""
+    with (
+        mock.patch(f"fastmail_sieve.commands.{command}.run", return_value=0) as run,
+        mock.patch("fastmail_sieve.cli.find_project", return_value=PROJECT) as find,
+    ):
+        code = main([*before, command, *argv])
+    assert code == 0, (command, argv, code)
+    [args, project] = run.call_args.args
+    assert project is PROJECT
+    return args, find
+
+
+def parse(command, *argv, before=()):
+    return parse_with_find(command, *argv, before=before)[0]
 
 
 class ParserTest(unittest.TestCase):
     def test_every_command_is_registered(self):
-        subparsers = next(
-            action for action in build_parser()._actions if action.dest == "command"
-        )
-        self.assertEqual(set(subparsers.choices), COMMANDS)
+        self.assertEqual(set(cli.commands), COMMANDS)
 
     def test_lint_options(self):
         plain = parse("lint")
@@ -88,7 +114,12 @@ class ParserTest(unittest.TestCase):
         self.assertFalse(parse("init").convert_markers)
 
     def test_the_project_option(self):
-        self.assertEqual(parse("-C", "somewhere", "lint").project, "somewhere")
+        _, find = parse_with_find("lint", before=("-C", "somewhere"))
+        find.assert_called_once_with("somewhere", "lint")
+        _, find = parse_with_find("lint", before=("--project", "elsewhere"))
+        find.assert_called_once_with("elsewhere", "lint")
+        _, find = parse_with_find("lint")
+        find.assert_called_once_with(None, "lint")
 
     def test_assemble_output(self):
         self.assertEqual(
@@ -96,16 +127,20 @@ class ParserTest(unittest.TestCase):
         )
         self.assertIsNone(parse("assemble").output)
 
+    def test_a_wrong_option_is_a_usage_error_naming_it(self):
+        code, _, err = run_main("lint", "--nope")
+        self.assertEqual(code, 2)
+        self.assertIn("--nope", err)
+
+    def test_a_wrong_topic_lists_the_choices(self):
+        code, _, err = run_main("explain", "nonsense")
+        self.assertEqual(code, 2)
+        self.assertIn("rules", err)
+
 
 class MainTest(unittest.TestCase):
     def run_main(self, *argv):
-        out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            try:
-                code = main(list(argv))
-            except SystemExit as exit_:
-                code = exit_.code
-        return code, out.getvalue(), err.getvalue()
+        return run_main(*argv)
 
     def test_version_prints_the_program_and_package_version(self):
         with mock.patch("fastmail_sieve.cli.package_version", return_value="1.2.3"):
@@ -138,12 +173,14 @@ class MainTest(unittest.TestCase):
     def test_no_command_prints_help_and_fails(self):
         code, _, err = self.run_main()
         self.assertEqual(code, 2)
-        self.assertIn("usage: fastmail-sieve", err)
+        self.assertIn("Usage: fastmail-sieve", err)
+        self.assertIn("Set up", err)
 
     def test_unknown_command_is_a_usage_error(self):
         code, _, err = self.run_main("nope")
         self.assertEqual(code, 2)
-        self.assertIn("invalid choice", err)
+        self.assertIn("No such command", err)
+        self.assertIn("nope", err)
 
     def test_a_runtime_error_becomes_a_one_line_failure(self):
         with mock.patch(
@@ -169,6 +206,18 @@ class MainTest(unittest.TestCase):
             self.assertEqual(out, "")
             self.assertEqual(len(err.strip().splitlines()), 1)
             self.assertTrue(err.startswith("✗ "))
+
+    def test_a_broken_http_exchange_is_a_one_line_failure(self):
+        import http.client
+
+        with mock.patch(
+            "fastmail_sieve.commands.folders.load_credentials",
+            side_effect=http.client.IncompleteRead(b"x"),
+        ):
+            code, out, err = self.run_main("folders")
+        self.assertEqual(code, 1)
+        self.assertEqual(len(err.strip().splitlines()), 1)
+        self.assertTrue(err.startswith("✗ "))
 
     def test_a_command_exit_code_is_returned(self):
         with mock.patch("fastmail_sieve.commands.lint.run_steps", return_value=1):

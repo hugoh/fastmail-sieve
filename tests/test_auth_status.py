@@ -5,7 +5,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-from fastmail_sieve.cli import build_parser, main
+from fastmail_sieve.cli import main
 from fastmail_sieve.fastmail.credentials import SourceStatus, inspect_sources
 
 SECRETS = ("fma1-SECRETTOKEN", "__Http-s_SECRETCOOKIE=1", "SECRETAPITOKEN")
@@ -199,10 +199,28 @@ def run_status(statuses):
 
 class StatusCommandTest(unittest.TestCase):
     def test_it_is_a_subcommand_and_plain_auth_is_unchanged(self):
-        parser = build_parser()
-        self.assertTrue(parser.parse_args(["auth", "--stdin"]).stdin)
-        self.assertEqual(parser.parse_args(["auth", "status"]).auth_command, "status")
-        self.assertIsNone(parser.parse_args(["auth"]).auth_command)
+        with (
+            mock.patch("fastmail_sieve.commands.auth.run", return_value=0) as store,
+            mock.patch(
+                "fastmail_sieve.commands.auth.run_status", return_value=0
+            ) as status,
+            mock.patch(
+                "fastmail_sieve.commands.auth.run_clear", return_value=0
+            ) as clear,
+            mock.patch("fastmail_sieve.cli.find_project"),
+        ):
+            main(["auth", "--stdin"])
+            self.assertTrue(store.call_args.args[0].stdin)
+            main(["auth"])
+            self.assertFalse(store.call_args.args[0].stdin)
+            self.assertEqual(store.call_count, 2)
+            status.assert_not_called()
+            main(["auth", "status"])
+            status.assert_called_once()
+            self.assertEqual(store.call_count, 2)
+            main(["auth", "clear"])
+            clear.assert_called_once()
+            self.assertEqual(store.call_count, 2)
 
     def test_it_lists_every_source_in_order_with_its_state(self):
         _, output = run_status(KEYCHAIN_ONLY)
@@ -298,3 +316,60 @@ class StatusCommandTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AuthClearAndBackendTest(unittest.TestCase):
+    def run_main(
+        self, *argv, removed=3, backend=("keyring.backends.macOS.Keyring", "secure")
+    ):
+        out, err = io.StringIO(), io.StringIO()
+        delete = mock.Mock(return_value=removed)
+        if isinstance(removed, Exception):
+            delete.side_effect = removed
+        patches = [
+            mock.patch("fastmail_sieve.commands.auth.delete_keychain", delete),
+            mock.patch(
+                "fastmail_sieve.commands.auth.keychain_backend", return_value=backend
+            ),
+            mock.patch.dict("os.environ", {}, clear=True),
+        ]
+        with contextlib.ExitStack() as stack:
+            for patch in patches:
+                stack.enter_context(patch)
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = main(list(argv))
+        return code, out.getvalue() + err.getvalue(), delete
+
+    def test_clear_removes_the_stored_credentials(self):
+        code, output, delete = self.run_main("auth", "clear")
+        self.assertEqual(code, 0)
+        delete.assert_called_once_with()
+        self.assertIn("Removed", output)
+
+    def test_clear_with_nothing_stored_says_so(self):
+        code, output, _ = self.run_main("auth", "clear", removed=0)
+        self.assertEqual(code, 0)
+        self.assertIn("Nothing", output)
+
+    def test_clear_leaves_the_environment_alone_and_says_so(self):
+        code, output, _ = self.run_main("auth", "clear")
+        self.assertIn("environment", output)
+
+    def test_clear_without_a_keychain_fails_clearly(self):
+        code, output, _ = self.run_main(
+            "auth", "clear", removed=RuntimeError("there is no usable keychain here")
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("no usable keychain", output)
+
+    def test_status_names_the_keychain_backend(self):
+        code, output, _ = self.run_main("auth", "status")
+        self.assertIn("keyring.backends.macOS.Keyring", output)
+        self.assertNotIn("weaker", output)
+
+    def test_status_warns_about_a_file_backend(self):
+        code, output, _ = self.run_main(
+            "auth", "status", backend=("keyrings.alt.file.PlaintextKeyring", "file")
+        )
+        self.assertIn("keyrings.alt.file.PlaintextKeyring", output)
+        self.assertIn("weaker than the OS keychain", output)

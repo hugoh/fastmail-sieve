@@ -4,10 +4,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from fastmail_sieve import config
 from fastmail_sieve.cli import main
-from fastmail_sieve.config import Config, find_root, load_config
+from fastmail_sieve.config import Config, Project, find_root, load_config
 
 
 class InTempDir(unittest.TestCase):
@@ -17,7 +18,6 @@ class InTempDir(unittest.TestCase):
         self.root = Path(directory.name).resolve()
         previous = os.getcwd()
         self.addCleanup(os.chdir, previous)
-        self.addCleanup(config.use, Config())
 
 
 class FindRootTest(InTempDir):
@@ -88,12 +88,98 @@ class LoadConfigTest(InTempDir):
             load_config(self.root)
 
 
-class CurrentTest(InTempDir):
-    def test_use_switches_what_the_rest_of_the_code_sees(self):
-        from fastmail_sieve.sieve.script import fragment_files
+class PathsStayInsideTheProjectTest(InTempDir):
+    def load(self, text):
+        (self.root / "fastmail-sieve.toml").write_text(text)
+        return load_config(self.root)
 
-        config.use(Config(rules_dir="elsewhere"))
-        self.assertEqual(fragment_files()[0], "elsewhere/top.sieve")
+    def test_unsafe_paths_are_refused_for_both_options(self):
+        for option in ("rules-dir", "variables-file"):
+            for value in ("/etc", "../outside", "a/../../b", ""):
+                with (
+                    self.subTest(option=option, value=value),
+                    self.assertRaisesRegex(
+                        RuntimeError, rf"{option}.*relative.*inside the project"
+                    ),
+                ):
+                    self.load(f"{option} = {value!r}\n")
+
+    def test_a_symlink_out_of_the_project_is_refused(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        (self.root / "link").symlink_to(outside.name)
+        with self.assertRaisesRegex(RuntimeError, "rules-dir.*inside the project"):
+            self.load('rules-dir = "link"\n')
+
+    def test_nested_relative_paths_are_fine(self):
+        loaded = self.load('rules-dir = "a/b"\nvariables-file = "c/d.toml"\n')
+        self.assertEqual(loaded.fragment_files[0], "a/b/top.sieve")
+
+
+class UntrustedParentTest(InTempDir):
+    """A project found by walking up must be one this user controls: running the
+    tool in a subdirectory of someone else's directory must not adopt its rules."""
+
+    def make_parent(self, mode=0o700):
+        parent = self.root / "parent"
+        (parent / "rules").mkdir(parents=True)
+        (parent / "rules" / "top.sieve").write_text("# planted\n")
+        parent.chmod(mode)
+        child = parent / "child"
+        child.mkdir()
+        return parent, child
+
+    def test_a_world_writable_parent_is_not_adopted(self):
+        parent, child = self.make_parent(0o777)
+        self.assertIsNone(find_root(child))
+
+    def test_a_parent_owned_by_someone_else_is_not_adopted(self):
+        parent, child = self.make_parent()
+        with mock.patch("fastmail_sieve.config.os.getuid", return_value=424242):
+            self.assertIsNone(find_root(child))
+
+    def test_your_own_private_parent_is_adopted(self):
+        parent, child = self.make_parent(0o755)
+        self.assertEqual(find_root(child), parent)
+
+    def test_the_starting_directory_is_always_yours_to_choose(self):
+        parent, _ = self.make_parent(0o777)
+        self.assertEqual(find_root(parent), parent)
+
+    def test_a_trusted_project_beyond_an_untrusted_one_is_still_found(self):
+        parent, child = self.make_parent(0o777)
+        (self.root / "fastmail-sieve.toml").write_text("")
+        self.assertEqual(find_root(child), self.root)
+
+
+class ProjectTest(InTempDir):
+    def test_the_fragment_names_follow_the_config(self):
+        project = Project(self.root, Config(rules_dir="elsewhere"))
+        self.assertEqual(project.fragment_files[0], "elsewhere/top.sieve")
+
+    def test_paths_are_resolved_against_the_root_not_the_working_directory(self):
+        project = Project(self.root)
+        self.assertEqual(project.path("rules/top.sieve"), self.root / "rules/top.sieve")
+
+    def test_fragments_are_read_from_the_root_wherever_we_stand(self):
+        (self.root / "rules").mkdir()
+        for name, text in zip(("top", "middle", "bottom"), "abc", strict=True):
+            (self.root / "rules" / f"{name}.sieve").write_text(text)
+        elsewhere = tempfile.TemporaryDirectory()
+        self.addCleanup(elsewhere.cleanup)
+        os.chdir(elsewhere.name)
+        self.assertEqual(Project(self.root).read_fragments(), ("a", "b", "c"))
+
+    def test_missing_fragments_are_explained(self):
+        with self.assertRaisesRegex(RuntimeError, r"(?s)rules/top.sieve.*init"):
+            Project(self.root).read_fragments()
+
+    def test_load_reads_the_config_file(self):
+        (self.root / "fastmail-sieve.toml").write_text('rules-dir = "sieve"\n')
+        self.assertEqual(Project.load(self.root).fragment_files[0], "sieve/top.sieve")
+
+    def test_there_is_no_global_current_config(self):
+        self.assertFalse(hasattr(config, "current") or hasattr(config, "use"))
 
 
 class CliProjectTest(InTempDir):
@@ -107,7 +193,7 @@ class CliProjectTest(InTempDir):
         self.make_project()
         os.chdir(self.root / "docs")
         self.assertEqual(main(["lint", "--offline"]), 0)
-        self.assertEqual(Path.cwd().resolve(), self.root)
+        self.assertEqual(Path.cwd().resolve(), self.root / "docs")
 
     def test_it_says_which_project_it_moved_to(self):
         self.make_project()
@@ -125,9 +211,11 @@ class CliProjectTest(InTempDir):
             main(["lint", "--offline"])
         self.assertNotIn("using the project", err.getvalue())
 
-    def test_project_option_runs_elsewhere(self):
+    def test_project_option_runs_elsewhere_and_leaves_the_working_directory_alone(self):
         self.make_project()
+        before = Path.cwd()
         self.assertEqual(main(["-C", str(self.root), "lint", "--offline"]), 0)
+        self.assertEqual(Path.cwd(), before)
 
     def test_the_config_file_moves_the_fragments(self):
         (self.root / "fastmail-sieve.toml").write_text('rules-dir = "sieve"\n')
@@ -141,10 +229,10 @@ class CliProjectTest(InTempDir):
 
     def test_outside_a_project_the_missing_file_is_explained(self):
         os.chdir(self.root)
-        with self.assertRaisesRegex(RuntimeError, r"rules/top.sieve.*init"):
-            from fastmail_sieve.sieve.script import read_fragments
-
-            read_fragments()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(main(["lint", "--offline"]), 1)
+        self.assertRegex(out.getvalue(), r"(?s)rules/top.sieve.*init")
 
 
 if __name__ == "__main__":

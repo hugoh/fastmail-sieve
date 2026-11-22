@@ -7,7 +7,9 @@ from fastmail_sieve.fastmail.credentials import (
     KEYCHAIN_SERVICE,
     LEGACY_KEYCHAIN_SERVICE,
     LazySources,
+    delete_keychain,
     gather,
+    keychain_backend,
     load_credentials,
     pick,
     read_keychain,
@@ -31,6 +33,85 @@ def command_result(payload, returncode=0):
             [], returncode, json.dumps(payload), None
         )
     )
+
+
+class PasswordDeleteError(Exception):
+    pass
+
+
+def fake_keyring(stored=None, backend=None):
+    """A keyring module with these (service, field) entries and this backend."""
+    stored = dict(stored or {})
+    keyring = mock.Mock()
+    keyring.errors.PasswordDeleteError = PasswordDeleteError
+
+    def delete(service, field):
+        if (service, field) not in stored:
+            raise PasswordDeleteError(field)
+        del stored[(service, field)]
+
+    keyring.delete_password.side_effect = delete
+    keyring.stored = stored
+    if backend is not None:
+        keyring.get_keyring.return_value = backend
+    return keyring
+
+
+def backend_of(module, name="Keyring"):
+    return type(name, (), {"__module__": module})()
+
+
+class DeleteKeychainTest(unittest.TestCase):
+    def delete(self, keyring):
+        modules = {"keyring": keyring, "keyring.errors": keyring.errors}
+        with mock.patch.dict("sys.modules", modules):
+            return delete_keychain()
+
+    def test_removes_every_field_under_both_names(self):
+        stored = {
+            (service, field): "x"
+            for service in (KEYCHAIN_SERVICE, LEGACY_KEYCHAIN_SERVICE)
+            for field in ("username", "token", "cookie")
+        }
+        keyring = fake_keyring(stored)
+        self.assertEqual(self.delete(keyring), 6)
+        self.assertEqual(keyring.stored, {})
+
+    def test_nothing_stored_is_not_an_error(self):
+        self.assertEqual(self.delete(fake_keyring()), 0)
+
+    def test_a_half_stored_pair_is_cleared_too(self):
+        keyring = fake_keyring({(KEYCHAIN_SERVICE, "token"): "x"})
+        self.assertEqual(self.delete(keyring), 1)
+
+    def test_no_usable_keychain_says_so(self):
+        keyring = fake_keyring()
+        keyring.delete_password.side_effect = RuntimeError("no backend")
+        with self.assertRaisesRegex(RuntimeError, "no usable keychain"):
+            self.delete(keyring)
+
+
+class KeychainBackendTest(unittest.TestCase):
+    def backend(self, module):
+        keyring = fake_keyring(backend=backend_of(module))
+        with mock.patch.dict("sys.modules", {"keyring": keyring}):
+            return keychain_backend()
+
+    def test_an_os_keychain_is_secure(self):
+        name, kind = self.backend("keyring.backends.macOS")
+        self.assertEqual((name, kind), ("keyring.backends.macOS.Keyring", "secure"))
+
+    def test_the_fail_backend_means_no_keychain(self):
+        self.assertEqual(self.backend("keyring.backends.fail")[1], "none")
+
+    def test_keyrings_alt_stores_in_files(self):
+        self.assertEqual(self.backend("keyrings.alt.file")[1], "file")
+
+    def test_a_broken_keyring_is_reported_as_none(self):
+        keyring = fake_keyring()
+        keyring.get_keyring.side_effect = RuntimeError("boom")
+        with mock.patch.dict("sys.modules", {"keyring": keyring}):
+            self.assertEqual(keychain_backend(), (None, "none"))
 
 
 class KeychainNameTest(unittest.TestCase):

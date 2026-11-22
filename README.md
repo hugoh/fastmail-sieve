@@ -65,6 +65,16 @@ uvx fastmail-sieve --help               # or run it without installing
 
 Python 3.11 or newer. The command is also installed as `fmsieve`.
 
+HTTPS requests verify certificates against the `certifi` bundle, not the
+operating system's store. Behind a proxy that re-signs TLS, point
+`REQUESTS_CA_BUNDLE` (or `SSL_CERT_FILE`) at your organisation's CA file.
+Reads are retried with backoff when Fastmail is busy or unreachable (HTTP 429
+and 5xx, connection errors, and JMAP `serverFail`, `serverUnavailable` and
+`rateLimit` errors), `Retry-After` is honoured, and no new retry starts after
+90 seconds. A write is retried only when it provably did not happen. The login
+is only ever sent to `api.fastmail.com` or one of its regional hosts such as
+`phl.api.fastmail.com`.
+
 ## Quick start
 
 ```sh
@@ -135,7 +145,11 @@ below).
    header and run `fastmail-sieve auth` to paste them into two hidden prompts.
 
 `auth` checks the pair against Fastmail and stores it in the keychain (service
-`fastmail-sieve-rules`). Run it again when commands fail with HTTP 401.
+`fastmail-sieve`). Run it again when commands fail with HTTP 401.
+`auth clear` removes what it stored (credentials in the environment or from a
+helper command are not touched, and the Fastmail session stays valid until you
+log out in Fastmail). `auth status` also names the keychain backend and warns
+if it keeps credentials in a file (`keyrings.alt`) instead of the OS keychain.
 
 ### Where credentials are read from
 
@@ -152,7 +166,8 @@ stored by this tool. It is run without a shell (use `sh -c '...'` for a
 pipeline) and must print `{"token": "fma1-…", "cookie": "…"}`, optionally with
 `"api_token"`. For example, `FASTMAIL_SIEVE_CREDENTIAL_COMMAND='op read
 op://Private/fastmail-sieve/json'`. It is read from your environment only,
-never from a file in the repository.
+never from a file in the repository. Because it is run for you, whoever can set
+that variable can run code as you: treat it like `PATH`.
 
 **Optional API token for folder lookups.** A read-only Fastmail API token
 (Settings > Privacy & Security > Connected apps & API tokens, Email scope) in
@@ -184,9 +199,11 @@ Fastmail advertises an official Sieve API, and says what to fix.
 overwrites a file. Run `fastmail-sieve init --remote` once to add the three
 managed blocks to Fastmail's script if it has none yet (a one-time write that
 keeps any code already there), then `fastmail-sieve pull`. Commands find the
-project from any subdirectory, or use `-C DIR`. An optional
+project from any subdirectory, or use `-C DIR`; a parent directory is only
+used if you own it and it is not world-writable (so a shared `/tmp` can never
+supply rules), otherwise run from the project itself or use `-C`. An optional
 `fastmail-sieve.toml` in the project root can set `rules-dir` and
-`variables-file`.
+`variables-file`; both must be relative paths that stay inside the project.
 
 ## Reading `explain`
 

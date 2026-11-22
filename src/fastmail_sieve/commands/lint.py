@@ -1,44 +1,49 @@
-from rich.console import Console
+import click
 
-from fastmail_sieve.commands._options import add_from_file, add_live
+from fastmail_sieve.commands._options import (
+    from_file_option,
+    invoke,
+    live_option,
+)
 from fastmail_sieve.steps import lint_steps, run_steps
+from fastmail_sieve.ui.tables import make_console
 
 
-def add_parser(subparsers):
-    parser = subparsers.add_parser(
-        "lint",
-        help="check everything: format, syntax, markers, variables, folder ids "
-        "and names, then warnings",
-        description="Run every check as a checklist that stops at the first failure: "
-        "format and syntax of your rules, then the assembled script (syntax, "
-        "markers, variables), then the folder stable ids and names, and finally "
-        "the warnings, which are shown but do not fail unless --strict.",
-    )
-    parser.add_argument(
-        "--fix",
-        action="store_true",
-        help="reformat your rules first (indentation and :mailboxid folder names)",
-    )
-    parser.add_argument(
-        "--offline",
-        action="store_true",
-        help="skip everything that needs Fastmail: only your rules are checked, "
-        "or, with --from-file, the saved script too but not the folders",
-    )
-    parser.add_argument(
-        "--strict", action="store_true", help="fail when there are warnings"
-    )
-    add_live(parser, "check")
-    add_from_file(parser)
-    parser.set_defaults(run=run)
+@click.command(
+    "lint",
+    short_help="check everything: format, syntax, markers, variables, folder ids "
+    "and names, then warnings",
+)
+@click.option(
+    "--fix",
+    is_flag=True,
+    help="reformat your rules first (indentation and :mailboxid folder names)",
+)
+@click.option(
+    "--offline",
+    is_flag=True,
+    help="skip everything that needs Fastmail: only your rules are checked, "
+    "or, with --from-file, the saved script too but not the folders",
+)
+@click.option("--strict", is_flag=True, help="fail when there are warnings")
+@live_option("check")
+@from_file_option()
+@click.pass_context
+def command(ctx, **options):
+    """Run every check as a checklist that stops at the first failure: format and
+    syntax of your rules, then the assembled script (syntax, markers, variables),
+    then the folder stable ids and names, and finally the warnings, which are
+    shown but do not fail unless --strict."""
+    invoke(ctx, run, options)
 
 
-def run(args):
+def run(args, project):
     steps = lint_steps(
+        project,
         offline=args.offline,
         from_file=args.from_file,
         fix=args.fix,
         strict=args.strict,
         live=args.live,
     )
-    return run_steps(steps, Console(highlight=False))
+    return run_steps(steps, make_console())

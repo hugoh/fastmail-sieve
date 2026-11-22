@@ -8,6 +8,7 @@ from fastmail_sieve.sieve.variables import (
     load_descriptions,
     render,
 )
+from fastmail_sieve.ui.tables import make_console
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 DESCRIBED = {
@@ -167,7 +168,7 @@ class RenderTest(unittest.TestCase):
 
     def test_colour_only_adds_escape_codes(self):
         plain = self.render()
-        coloured = self.render(color=True)
+        coloured = self.render(console=make_console("always"))
         self.assertIn("\x1b[", coloured)
         self.assertEqual(ANSI.sub("", coloured), plain)
 
@@ -187,21 +188,19 @@ class LoadDescriptionsTest(unittest.TestCase):
 
 class VariableDocsFileTest(unittest.TestCase):
     def test_a_missing_file_says_how_to_create_it(self):
-        import os
         import tempfile
+        from pathlib import Path
 
+        from fastmail_sieve.config import Project
         from fastmail_sieve.sieve.variables import load_variable_docs
 
-        with tempfile.TemporaryDirectory() as directory:
-            previous = os.getcwd()
-            os.chdir(directory)
-            try:
-                with self.assertRaisesRegex(
-                    RuntimeError, r"variables\.toml.*fastmail-sieve init"
-                ):
-                    load_variable_docs()
-            finally:
-                os.chdir(previous)
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            self.assertRaisesRegex(
+                RuntimeError, r"variables\.toml.*fastmail-sieve init"
+            ),
+        ):
+            load_variable_docs(Project(Path(directory)))
 
 
 if __name__ == "__main__":

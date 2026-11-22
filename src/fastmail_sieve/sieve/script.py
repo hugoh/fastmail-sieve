@@ -1,7 +1,3 @@
-from pathlib import Path
-
-from fastmail_sieve import config
-
 START_TEXTS = ("Managed by fastmail-sieve: start", "Managed by Sieve Sync Start")
 END_TEXTS = ("Managed by fastmail-sieve: end", "Managed by Sieve Sync End")
 MARKER_START = f"#### {START_TEXTS[0]} ####"
@@ -73,19 +69,3 @@ def assemble(skeleton, top, middle, bottom):
         result += fragment.removesuffix("\n").split("\n") if fragment else []
         cursor = end
     return "\n".join(result + lines[cursor:])
-
-
-def fragment_files():
-    return config.current().fragment_files
-
-
-def read_fragments():
-    try:
-        return tuple(
-            Path(name).read_text(encoding="utf-8") for name in fragment_files()
-        )
-    except FileNotFoundError as error:
-        raise RuntimeError(
-            f"{error.filename} not found: run from your rules project (or use -C DIR), "
-            "or create one with `fastmail-sieve init`"
-        ) from error
