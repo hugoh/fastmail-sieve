@@ -1,6 +1,11 @@
 import unittest
 
-from fastmail_sieve.fastmail.blocks import RemoteScript, get_script, set_blocks
+from fastmail_sieve.fastmail.blocks import (
+    RemoteScript,
+    get_script,
+    set_blocks,
+    validate_sieve,
+)
 from fastmail_sieve.sieve.script import (
     LEGACY_MARKER_END,
     LEGACY_MARKER_START,
@@ -323,6 +328,31 @@ class SetBlocksTest(unittest.TestCase):
         }
         with self.assertRaisesRegex(RuntimeError, "refused.*invalidProperties"):
             set_blocks(CREDS, remote(), session_then(reply))
+
+
+class ValidateSieveTest(unittest.TestCase):
+    def reply(self, result):
+        return session_then({"methodResponses": [["Validate/sieve", result, "0"]]})
+
+    def test_a_valid_script_has_no_problem(self):
+        call = self.reply({"isValid": True, "errorDescription": ""})
+        self.assertIsNone(validate_sieve(CREDS, "stop;\n", call))
+        [name, arguments, _] = call.calls[1]["methodCalls"][0]
+        self.assertEqual(name, "Validate/sieve")
+        self.assertEqual(arguments, {"accountId": "u1", "sieve": "stop;\n"})
+        self.assertEqual(
+            call.calls[1]["using"],
+            ["https://www.fastmail.com/dev/rules", "https://www.fastmail.com/dev/user"],
+        )
+
+    def test_an_invalid_script_gives_fastmails_own_description(self):
+        call = self.reply(
+            {"isValid": False, "errorDescription": "line 4: syntax error"}
+        )
+        self.assertEqual(validate_sieve(CREDS, "x", call), "line 4: syntax error")
+
+    def test_an_answer_that_does_not_say_valid_is_not_taken_as_valid(self):
+        self.assertIn("did not say", validate_sieve(CREDS, "x", self.reply({})))
 
 
 if __name__ == "__main__":

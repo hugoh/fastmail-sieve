@@ -193,3 +193,16 @@ def set_blocks(credentials, script, call=jmap):
     )
     if result.get("notUpdated"):
         raise RuntimeError(f"Fastmail refused the update: {result['notUpdated']}")
+
+
+def validate_sieve(credentials, text, call=jmap):
+    """Ask Fastmail whether it accepts this whole script: None if it does, else
+    why not. Its parser is stricter than the Sieve spec (keywords must be
+    lowercase), so only this answer says the script will be accepted."""
+    result = invoke(credentials, SIEVE_USING, "Validate/sieve", {"sieve": text}, call)
+    if result.get("isValid") is True:
+        return None
+    return (
+        result.get("errorDescription")
+        or "Fastmail's validator did not say the script is valid"
+    )

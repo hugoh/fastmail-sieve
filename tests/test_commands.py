@@ -220,6 +220,7 @@ class LiveTargetTest(Project):
                 "fastmail_sieve.steps.pick", return_value={"token": "t", "cookie": "c"}
             ),
             mock.patch("fastmail_sieve.steps.fetch_mailboxes", return_value=boxes),
+            mock.patch("fastmail_sieve.steps.validate_sieve", return_value=None),
         ):
             code, out, _ = run("lint", "--live", "--from-file", "live.sieve")
         self.assertEqual(code, 1)

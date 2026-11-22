@@ -25,6 +25,42 @@ if allof(
 """
 
 
+class LowercaseTest(unittest.TestCase):
+    """Sieve ignores the case of keywords, but Fastmail's validator rejects
+    anything but lowercase."""
+
+    def test_lowercases_commands_tests_and_tags(self):
+        self.assertEqual(
+            format_sieve('IF anyOf (TRUE, Header :IS "a" "b") { Stop; }\n'),
+            'if anyof (true, header :is "a" "b") { stop; }\n',
+        )
+
+    def test_leaves_strings_and_comments_alone(self):
+        text = (
+            '# Keep THIS\nFileInto "INBOX.Code"; # And THIS\n'
+            'if header :contains "Subject" "A \\"Quote\\" B" { /* KEEP */ stop; }\n'
+        )
+        formatted = format_sieve(text)
+        self.assertIn('fileinto "INBOX.Code"; # And THIS', formatted)
+        self.assertIn("# Keep THIS", formatted)
+        self.assertIn('"A \\"Quote\\" B"', formatted)
+        self.assertIn("/* KEEP */", formatted)
+
+    def test_leaves_text_blocks_alone(self):
+        text = 'if Jmapquery text:\n{"From": "A@B"}\n.\n) {\n}\n'
+        formatted = format_sieve(text)
+        self.assertTrue(formatted.startswith("if jmapquery text:\n"))
+        self.assertIn('{"From": "A@B"}', formatted)
+
+    def test_a_mixed_case_script_is_reported_as_not_formatted(self):
+        self.assertEqual(
+            len(format_errors({"middle": "if anyOf (true) { stop; }\n"})), 1
+        )
+        self.assertEqual(
+            format_errors({"middle": "if anyof (true) {\n  stop;\n}\n"}), []
+        )
+
+
 class IndentTest(unittest.TestCase):
     def test_indents_nested_blocks(self):
         self.assertEqual(
