@@ -63,6 +63,41 @@ def _code(line):
     return INLINE_COMMENT.sub(lambda m: " " * len(m[0]), "".join(out))
 
 
+def _lowercase_code(line):
+    """The line with everything lowercased except strings and comments: Sieve
+    ignores the case of keywords and tags, but Fastmail's validator does not."""
+    out = []
+    in_string = False
+    escaped = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            out.append(char)
+        elif char == '"':
+            in_string = True
+            out.append(char)
+        elif char == "#":
+            out.append(line[index:])
+            break
+        elif line.startswith("/*", index):
+            end = line.find("*/", index + 2)
+            end = len(line) if end == -1 else end + 2
+            out.append(line[index:end])
+            index = end
+            continue
+        else:
+            out.append(char.lower())
+        index += 1
+    return "".join(out)
+
+
 def _leading_closers(code):
     count = 0
     for char in code.lstrip():
@@ -87,7 +122,7 @@ def format_sieve(text):
             lines.append(line)
             in_block_comment = "*/" not in line
             continue
-        stripped = _normalize_folder_names(line.strip())
+        stripped = _lowercase_code(_normalize_folder_names(line.strip()))
         if not stripped:
             lines.append("")
             continue

@@ -14,14 +14,6 @@ from fastmail_sieve.fastmail.credentials import (
 )
 from fastmail_sieve.fastmail.jmap import SESSION_URL, jmap
 
-DISCOVERY_NOTICE = """\
---discover reads data that belongs to other apps, to find the cookie for you:
-  - it asks the macOS keychain for the "Fastmail Safe Storage" key and uses it to
-    decrypt the Fastmail desktop app's cookie database;
-  - it reads the fastmail.com cookies stored by Safari and Chrome.
-Nothing leaves your machine except the check against Fastmail's session URL.
-macOS may ask you to allow the keychain access."""
-
 
 def add_parser(subparsers):
     parser = subparsers.add_parser(
@@ -37,12 +29,6 @@ def add_parser(subparsers):
         help="read a pasted 'Copy as cURL' command from standard input, "
         "for example `pbpaste | fastmail-sieve auth --stdin`",
     )
-    parser.add_argument(
-        "--discover",
-        action="store_true",
-        help="find the cookie in the Fastmail app or a browser instead of asking for it "
-        "(needs the auth extra; reads other apps' stored data)",
-    )
     parser.set_defaults(run=run)
     actions = parser.add_subparsers(dest="auth_command", metavar="[status]")
     status = actions.add_parser(
@@ -56,22 +42,11 @@ def add_parser(subparsers):
     status.set_defaults(run=run_status)
 
 
-def discover_cookie(token, check):
-    try:
-        from fastmail_sieve.fastmail import auth_discovery
-    except ImportError as error:
-        raise RuntimeError(
-            "--discover needs the auth extra: install `fastmail-sieve[auth]` "
-            "(or run `uv run --extra auth fastmail-sieve auth --discover`)"
-        ) from error
-    return auth_discovery.discover_cookie(token, check)
-
-
 def _username(token, cookie):
     return jmap(SESSION_URL, {"token": token, "cookie": cookie})["username"]
 
 
-def _collect(args, console):
+def _collect(args):
     if args.stdin:
         token, cookie = parse_curl(sys.stdin.read())
         return validate_token(token), cookie
@@ -80,11 +55,6 @@ def _collect(args, console):
     )
     cookie = os.environ.get(ENV_COOKIE)
     if cookie:
-        return token, cookie
-    if args.discover:
-        console.print(DISCOVERY_NOTICE, markup=False)
-        source, cookie = discover_cookie(token, _username)
-        console.print(f"Found a cookie that Fastmail accepts ({source})", markup=False)
         return token, cookie
     return token, clean_cookie(getpass.getpass("Fastmail cookie (__Http-s_…=…): "))
 
@@ -95,7 +65,7 @@ def clean_cookie(raw):
 
 def run(args):
     console = progress_console()
-    token, cookie = _collect(args, console)
+    token, cookie = _collect(args)
     username = _username(token, cookie)
     store_keychain(username, token, cookie)
     console.print(

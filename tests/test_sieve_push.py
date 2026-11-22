@@ -152,6 +152,7 @@ LINT_NAMES = [
     "Valid syntax in the assembled script",
     "Valid markers in the assembled script",
     "Valid variables",
+    "Accepted by Fastmail's validator",
     "Valid folder stable ids",
     "Valid folder names",
     "Warnings",
@@ -185,7 +186,11 @@ class StepListTest(unittest.TestCase):
         self.assertIn("Valid folder names", steps)
 
     def test_offline_from_file_drops_only_the_folder_checks(self):
-        expected = [n for n in LINT_NAMES if "folder" not in n and "Fetch" not in n]
+        expected = [
+            n
+            for n in LINT_NAMES
+            if "folder" not in n and "Fetch" not in n and "validator" not in n
+        ]
         expected.insert(1, "Read the saved script")
         self.assertEqual(names(lint_steps(offline=True, from_file="f")), expected)
 
@@ -267,6 +272,22 @@ class SessionTest(unittest.TestCase):
             self.assertEqual(session.check_markers().errors, [])
         syntax.assert_called_once_with(session.assembled)
         markers.assert_called_once_with(session.assembled)
+
+    def test_the_validator_step_fails_with_fastmails_description(self):
+        session = self.fetched()
+        session.assemble()
+        with mock.patch(
+            "fastmail_sieve.steps.validate_sieve", return_value="line 3: syntax error"
+        ) as validate:
+            result = session.validate()
+        self.assertEqual(result.errors, ["line 3: syntax error"])
+        validate.assert_called_once_with(mock.ANY, session.assembled)
+
+    def test_the_validator_step_passes_when_fastmail_accepts_the_script(self):
+        session = self.fetched()
+        session.assemble()
+        with mock.patch("fastmail_sieve.steps.validate_sieve", return_value=None):
+            self.assertEqual(session.validate().errors, [])
 
     def test_read_file_uses_a_saved_script_and_never_asks_fastmail(self):
         with tempfile.TemporaryDirectory() as directory:

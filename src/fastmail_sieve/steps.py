@@ -2,7 +2,12 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from fastmail_sieve.fastmail.blocks import CHANGED, get_script, set_blocks
+from fastmail_sieve.fastmail.blocks import (
+    CHANGED,
+    get_script,
+    set_blocks,
+    validate_sieve,
+)
 from fastmail_sieve.fastmail.credentials import LazySources, pick
 from fastmail_sieve.fastmail.mailboxes import check_ids, check_names, fetch_mailboxes
 from fastmail_sieve.sieve.format import format_errors, format_files
@@ -132,6 +137,11 @@ class Session:
     def check_syntax(self):
         return Result(errors=_errors(check_syntax(self.assembled)))
 
+    def validate(self):
+        return Result(
+            errors=_errors(validate_sieve(self.credentials(), self.assembled))
+        )
+
     def check_markers(self):
         return Result(errors=_errors(check_markers(self.assembled)))
 
@@ -241,6 +251,7 @@ def lint_steps(
     if not offline:
         folders = FolderChecks(session)
         steps += [
+            Step("Accepted by Fastmail's validator", session.validate, slow=True),
             Step("Valid folder stable ids", folders.check_ids, slow=True),
             Step("Valid folder names", folders.check_names),
         ]

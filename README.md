@@ -63,8 +63,7 @@ uv tool install fastmail-sieve          # or: pipx install fastmail-sieve
 uvx fastmail-sieve --help               # or run it without installing
 ```
 
-Python 3.11 or newer. The optional `auth` extra (`fastmail-sieve[auth]`) is
-only for `auth --discover`. The command is also installed as `fmsieve`.
+Python 3.11 or newer. The command is also installed as `fmsieve`.
 
 ## Quick start
 
@@ -91,7 +90,7 @@ fastmail-sieve push              # shows the diff, asks, pushes, verifies
 | `push` | Check everything, show the diff, ask, push the managed blocks, then verify with a fresh pull. `--yes` skips the question |
 | `diff` | Show what a push would change (`+` added, `-` removed) |
 | `assemble` | Print the full script (Fastmail's parts plus your fragments); `--output FILE` writes it |
-| `lint` | The one check, as a checklist that stops at the first failure: format and syntax of your rules, then the assembled script (syntax, markers, variables), the folder stable ids and names, and finally the warnings (overlaps, duplicate or conflicting UI rules, disabled UI rules, stale variable descriptions), which are shown but do not fail. `--fix` reformats your rules first (indentation and `:mailboxid` folder names); `--strict` makes warnings fail; `--offline` skips everything that needs Fastmail; `--from-file FILE` checks a saved script; `--live` checks Fastmail's script exactly as it is now and ignores your files (see below) |
+| `lint` | The one check, as a checklist that stops at the first failure: format and syntax of your rules, then the assembled script (syntax, markers, variables), whether Fastmail's own validator accepts it (`Validate/sieve`: a script it rejects cannot be saved in the web editor, even though the Sieve spec allows it), the folder stable ids and names, and finally the warnings (overlaps, duplicate or conflicting UI rules, disabled UI rules, stale variable descriptions), which are shown but do not fail. `--fix` reformats your rules first (indentation, `:mailboxid` folder names, and lowercase keywords and tags: Fastmail's validator rejects `anyOf` or `IF`, though Sieve itself ignores case); `--strict` makes warnings fail; `--offline` skips everything that needs Fastmail; `--from-file FILE` checks a saved script; `--live` checks Fastmail's script exactly as it is now and ignores your files (see below) |
 | `explain [TOPIC]` | `rules` (the default): a summary table, then your rules and your UI rules as tables. `script`: the whole script in execution order. `variables`: the script's variables and where they are set and read |
 | `migrate` | Print custom rules equivalent to your enabled Fastmail UI rules |
 | `folders` | List Fastmail folders and their ids (`folders tax` filters by path) |
@@ -137,13 +136,6 @@ below).
 
 `auth` checks the pair against Fastmail and stores it in the keychain (service
 `fastmail-sieve-rules`). Run it again when commands fail with HTTP 401.
-
-`fastmail-sieve auth --discover` can look for the cookie for you in the Fastmail
-desktop app and in Safari and Chrome. **It reads data that belongs to other
-apps**: it asks the macOS keychain for the "Fastmail Safe Storage" key and
-decrypts the app's cookie database. It is off by default, needs the `auth`
-extra (`pip install 'fastmail-sieve[auth]'`), and prints what it will read
-before it does.
 
 ### Where credentials are read from
 

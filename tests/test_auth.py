@@ -123,21 +123,10 @@ class AuthCommandTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("no usable keychain", output)
 
-    def test_discovery_only_runs_when_asked_and_says_what_it_reads(self):
-        finder = mock.Mock(return_value=("Fastmail app", COOKIE))
-        with mock.patch("fastmail_sieve.commands.auth.discover_cookie", finder):
-            code, output, _, store = self.run_auth("--discover", prompts=[TOKEN])
-        self.assertEqual(code, 0)
-        finder.assert_called_once()
-        store.assert_called_once_with("me@example.com", TOKEN, COOKIE)
-        self.assertIn("Fastmail Safe Storage", output)
-        self.assertIn("other apps", output)
-
-    def test_without_discover_nothing_is_discovered(self):
-        finder = mock.Mock()
-        with mock.patch("fastmail_sieve.commands.auth.discover_cookie", finder):
-            self.run_auth(prompts=[TOKEN, COOKIE])
-        finder.assert_not_called()
+    def test_there_is_no_discover_option(self):
+        with self.assertRaises(SystemExit) as raised:
+            self.run_auth("--discover", prompts=[TOKEN])
+        self.assertEqual(raised.exception.code, 2)
 
 
 if __name__ == "__main__":
