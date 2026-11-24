@@ -57,6 +57,20 @@ class TranslateTest(unittest.TestCase):
             "}\n",
         )
 
+    def test_read_marks_the_message_seen_before_filing(self):
+        result = one("t", from_query("a@b.c"), folder_body("L0_home", "read"))
+        self.assertEqual(result.errors, [])
+        lines = result.snippet.splitlines()
+        seen = next(i for i, line in enumerate(lines) if 'addflag "\\\\Seen";' in line)
+        filing = next(i for i, line in enumerate(lines) if "fileinto" in line)
+        self.assertLess(seen, filing)
+
+    def test_read_and_flagged_both_add_their_flags(self):
+        body = folder_body("L0_home", "read", "flagged")
+        result = one("t", from_query("a@b.c"), body)
+        self.assertIn('addflag "\\\\Seen";', result.snippet)
+        self.assertIn('addflag "\\\\Flagged";', result.snippet)
+
     def test_skip_inbox_and_stop_is_a_move(self):
         body = folder_body("L1_shop", "skipinbox") + '\n  set "stop" "Y";'
         result = one("from:a@b.c", from_query("a@b.c"), body)

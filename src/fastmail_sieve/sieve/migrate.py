@@ -9,7 +9,7 @@ from fastmail_sieve.sieve import wording as ex
 from fastmail_sieve.sieve.format import format_sieve
 from fastmail_sieve.sieve.variable_docs import folder_label
 
-CARRIED_FLAGS = ("skipinbox", "flagged", "stop")
+CARRIED_FLAGS = ("skipinbox", "flagged", "read", "stop")
 FILING_SOURCE = re.compile(r"^\$\{([^}]+)\}$")
 INDENT = "  "
 
@@ -183,6 +183,8 @@ def _rule_text(title, condition, folder, flags):
     mailbox_id, name = folder
     copy = "" if "skipinbox" in flags else ":copy "
     body = []
+    if "read" in flags:
+        body.append('addflag "\\\\Seen";')
     if "flagged" in flags:
         body.append('addflag "\\\\Flagged";')
     body.append(f"fileinto {copy}:mailboxid {_quote(mailbox_id)} {_quote(name)};")
