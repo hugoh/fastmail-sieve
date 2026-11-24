@@ -51,17 +51,17 @@ class TranslateTest(unittest.TestCase):
         self.assertEqual(result.errors, [])
         self.assertEqual(
             result.snippet,
-            "  # from:a@b.c\n"
-            '  if address :is "from" "a@b.c" {\n'
-            '    fileinto :copy :mailboxid "P-xSc" "INBOX.home";\n'
-            "  }\n",
+            "# from:a@b.c\n"
+            'if address :is "from" "a@b.c" {\n'
+            '  fileinto :copy :mailboxid "P-xSc" "INBOX.home";\n'
+            "}\n",
         )
 
     def test_skip_inbox_and_stop_is_a_move(self):
         body = folder_body("L1_shop", "skipinbox") + '\n  set "stop" "Y";'
         result = one("from:a@b.c", from_query("a@b.c"), body)
         self.assertIn(
-            '    fileinto :mailboxid "P-yRL" "INBOX.INBOX.Shopping 🛒";\n    stop;\n',
+            '  fileinto :mailboxid "P-yRL" "INBOX.INBOX.Shopping 🛒";\n  stop;\n',
             result.snippet,
         )
         self.assertNotIn(":copy", result.snippet)
@@ -88,14 +88,14 @@ class TranslateTest(unittest.TestCase):
     def test_several_addresses_become_a_list(self):
         result = one("t", from_query("a@b.c", "d@e.f"), folder_body("L0_home"))
         self.assertIn(
-            '  if address :is "from" [\n    "a@b.c",\n    "d@e.f"\n  ] {\n',
+            'if address :is "from" [\n  "a@b.c",\n  "d@e.f"\n] {\n',
             result.snippet,
         )
 
     def test_addresses_and_domains_are_combined_with_anyof(self):
         result = one("t", from_query("a@b.c", "e.f"), folder_body("L0_home"))
         self.assertIn(
-            '  if anyof (\n    address :is "from" "a@b.c",\n    address :domain "from" "e.f"\n  ) {\n',
+            'if anyof (\n  address :is "from" "a@b.c",\n  address :domain "from" "e.f"\n) {\n',
             result.snippet,
         )
 
@@ -104,7 +104,7 @@ class TranslateTest(unittest.TestCase):
             search("one", from_query("a@b.c"), folder_body("L0_home")),
             search("two", from_query("x@y.z"), folder_body("L1_shop")),
         )
-        self.assertIn("  }\n\n  # two\n", migrate(text).snippet)
+        self.assertIn("}\n\n# two\n", migrate(text).snippet)
 
     def test_the_output_passes_the_linter(self):
         result = one(
@@ -178,10 +178,10 @@ class JmapqueryTest(unittest.TestCase):
         self.assertEqual(result.errors, [])
         self.assertEqual(
             result.snippet,
-            "  # from:Contact\n"
-            '  if jmapquery "{\\"fromContactCardUid\\":\\"abc-123\\"}" {\n'
-            '    fileinto :copy :mailboxid "P-xSc" "INBOX.home";\n'
-            "  }\n",
+            "# from:Contact\n"
+            'if jmapquery "{\\"fromContactCardUid\\":\\"abc-123\\"}" {\n'
+            '  fileinto :copy :mailboxid "P-xSc" "INBOX.home";\n'
+            "}\n",
         )
 
     def test_a_long_search_falls_back_to_a_text_block(self):
@@ -193,21 +193,15 @@ class JmapqueryTest(unittest.TestCase):
         self.assertEqual(
             result.snippet.splitlines()[:6],
             [
-                "  # t",
-                "  if jmapquery text:",
+                "# t",
+                "if jmapquery text:",
                 "{",
                 f'   "subject": "{long_value}"',
                 "}",
                 ".",
             ],
         )
-        self.assertEqual(result.snippet.splitlines()[6], "  {")
-
-    def test_both_forms_are_already_formatted_when_pasted_into_a_block(self):
-        for query in (CONTACT, f'{{ "subject": "{"y" * 90}" }}'):
-            result = convert(search("t", query, folder_body("L0_home")))
-            pasted = "if true {\n" + result.snippet + "}\n"
-            self.assertEqual(format_sieve(pasted), pasted)
+        self.assertEqual(result.snippet.splitlines()[6], "{")
 
     def test_other_searches_pass_through_too(self):
         result = convert(
@@ -246,6 +240,20 @@ class JmapqueryTest(unittest.TestCase):
         result = migrate(text)
         self.assertEqual(result.snippet, "")
         self.assertIn("could not be read", result.errors[0])
+
+
+class FormattedOutputTest(unittest.TestCase):
+    def test_the_snippet_is_formatted_at_the_top_level(self):
+        long_value = "y" * 90
+        for query in (
+            from_query("a@b.c", "e.f"),
+            CONTACT,
+            f'{{ "subject": "{long_value}" }}',
+        ):
+            result = convert(search("t", query, folder_body("L1_shop", "flagged")))
+            self.assertEqual(result.errors, [])
+            self.assertEqual(format_sieve(result.snippet), result.snippet)
+            self.assertTrue(result.snippet.startswith("# t\n"))
 
 
 class CliTest(unittest.TestCase):
