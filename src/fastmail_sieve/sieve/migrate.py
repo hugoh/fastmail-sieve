@@ -6,6 +6,7 @@ from sievelib.parser import Parser
 
 from fastmail_sieve.sieve import lint as check_sieve
 from fastmail_sieve.sieve import wording as ex
+from fastmail_sieve.sieve.format import format_sieve
 from fastmail_sieve.sieve.variable_docs import folder_label
 
 CARRIED_FLAGS = ("skipinbox", "flagged", "stop")
@@ -242,5 +243,5 @@ def migrate(script_text):
         if problem:
             result.errors.append(f"generated Sieve failed the linter: {problem}")
     if not result.errors:
-        result.snippet = snippet
+        result.snippet = format_sieve(snippet)
     return result
